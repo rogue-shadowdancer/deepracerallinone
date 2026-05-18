@@ -1,0 +1,27 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>{{ title or "DeepRacer Model Gateway" }}</title>
+    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
+  </head>
+  <body>
+    <header class="topbar">
+      <a class="brand" href="/">DeepRacer Model Gateway</a>
+      <nav>
+        <a href="/upload">Upload</a>
+        <a href="/admin">Admin</a>
+      </nav>
+    </header>
+    <main class="page">
+      {% if notice %}
+        <div class="notice">{{ notice }}</div>
+      {% endif %}
+      {% if error %}
+        <div class="error">{{ error }}</div>
+      {% endif %}
+      {% block content %}{% endblock %}
+    </main>
+  </body>
+</html>

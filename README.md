@@ -5,6 +5,7 @@ This repository is a lightweight index for AWS DeepRacer open-source materials. 
 ## Layout
 
 - `deepracer-open-source-navigator/` - Codex skill skeleton for finding the right DeepRacer repo, docs, and setup path.
+- `model-gateway/` - Local LAN FastAPI service for competition model upload, admin review, and vehicle dispatch.
 - `vehicle-code/` - Official AWS DeepRacer vehicle-side ROS2 and device-code submodules.
 - `training-code/` - DeepRacer on AWS, simulator, RL environment, and notebook submodules.
 

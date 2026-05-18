@@ -1,0 +1,113 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="admin-heading">
+  <h1>Admin queue</h1>
+  <form method="post" action="/admin/logout">
+    <button type="submit" class="secondary">Logout</button>
+  </form>
+</div>
+
+<section class="panel">
+  <h2>Vehicles</h2>
+  <form method="post" action="/admin/vehicles" class="inline-form">
+    <input name="name" placeholder="Car name" required>
+    <input name="console_url" placeholder="http://192.168.0.42" required>
+    <input name="console_password" placeholder="Console password" type="password">
+    <button type="submit">Save vehicle</button>
+  </form>
+  <table>
+    <thead>
+      <tr><th>Name</th><th>Console URL</th><th>Credential</th></tr>
+    </thead>
+    <tbody>
+      {% for vehicle in vehicles %}
+        <tr>
+          <td>{{ vehicle.name }}</td>
+          <td>{{ vehicle.console_url }}</td>
+          <td>{{ "configured" if vehicle.console_password else "not set" }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="3" class="muted">No vehicles configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Submissions</h2>
+  <table>
+    <thead>
+      <tr>
+        <th>ID</th>
+        <th>Team</th>
+        <th>Racer</th>
+        <th>Model</th>
+        <th>Status</th>
+        <th>Size</th>
+        <th>Actions</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for submission in submissions %}
+        <tr>
+          <td>#{{ submission.id }}</td>
+          <td>{{ submission.team_name }}</td>
+          <td>{{ submission.racer_name }}</td>
+          <td>
+            <strong>{{ submission.model_name }}</strong><br>
+            <span class="muted">{{ submission.original_filename }}</span>
+            {% if submission.warning %}<br><span class="warning">{{ submission.warning }}</span>{% endif %}
+            {% if submission.reject_reason %}<br><span class="warning">{{ submission.reject_reason }}</span>{% endif %}
+            {% if submission.failure_reason %}<br><span class="warning">{{ submission.failure_reason }}</span>{% endif %}
+          </td>
+          <td><span class="status">{{ submission.status }}</span></td>
+          <td>{{ (submission.size_bytes / 1048576) | round(1) }} MB</td>
+          <td class="actions">
+            <form method="post" action="/admin/submissions/{{ submission.id }}/approve">
+              <button type="submit" class="secondary">Approve</button>
+            </form>
+            <form method="post" action="/admin/submissions/{{ submission.id }}/reject" class="reject-form">
+              <input name="reason" placeholder="Reason">
+              <button type="submit" class="secondary">Reject</button>
+            </form>
+            <form method="post" action="/admin/submissions/{{ submission.id }}/dispatch" class="dispatch-form">
+              <select name="vehicle_id" required>
+                <option value="">Select vehicle</option>
+                {% for vehicle in vehicles %}
+                  <option value="{{ vehicle.id }}">{{ vehicle.name }}</option>
+                {% endfor %}
+              </select>
+              <button type="submit">Dispatch</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">No submissions yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Recent dispatches</h2>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Vehicle</th><th>Model</th><th>Status</th><th>Message</th><th>Updated</th></tr>
+    </thead>
+    <tbody>
+      {% for dispatch in dispatches %}
+        <tr>
+          <td>#{{ dispatch.id }}</td>
+          <td>{{ dispatch.vehicle_name }}</td>
+          <td>{{ dispatch.model_name }}</td>
+          <td><span class="status">{{ dispatch.status }}</span></td>
+          <td>{{ dispatch.message }}</td>
+          <td>{{ dispatch.updated_at }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">No dispatches yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
