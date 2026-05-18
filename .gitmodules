@@ -1,0 +1,90 @@
+[submodule "vehicle-code/aws-deepracer-launcher"]
+	path = vehicle-code/aws-deepracer-launcher
+	url = https://github.com/aws-deepracer/aws-deepracer-launcher.git
+[submodule "vehicle-code/aws-deepracer"]
+	path = vehicle-code/aws-deepracer
+	url = https://github.com/aws-deepracer/aws-deepracer.git
+[submodule "vehicle-code/aws-deepracer-camera-pkg"]
+	path = vehicle-code/aws-deepracer-camera-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-camera-pkg.git
+[submodule "vehicle-code/aws-deepracer-ctrl-pkg"]
+	path = vehicle-code/aws-deepracer-ctrl-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-ctrl-pkg.git
+[submodule "vehicle-code/aws-deepracer-inference-pkg"]
+	path = vehicle-code/aws-deepracer-inference-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-inference-pkg.git
+[submodule "vehicle-code/aws-deepracer-navigation-pkg"]
+	path = vehicle-code/aws-deepracer-navigation-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-navigation-pkg.git
+[submodule "vehicle-code/aws-deepracer-servo-pkg"]
+	path = vehicle-code/aws-deepracer-servo-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-servo-pkg.git
+[submodule "vehicle-code/aws-deepracer-webserver-pkg"]
+	path = vehicle-code/aws-deepracer-webserver-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-webserver-pkg.git
+[submodule "vehicle-code/aws-deepracer-systems-pkg"]
+	path = vehicle-code/aws-deepracer-systems-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-systems-pkg.git
+[submodule "vehicle-code/aws-deepracer-interfaces-pkg"]
+	path = vehicle-code/aws-deepracer-interfaces-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-interfaces-pkg.git
+[submodule "vehicle-code/aws-deepracer-sensor-fusion-pkg"]
+	path = vehicle-code/aws-deepracer-sensor-fusion-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-sensor-fusion-pkg.git
+[submodule "vehicle-code/aws-deepracer-model-optimizer-pkg"]
+	path = vehicle-code/aws-deepracer-model-optimizer-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-model-optimizer-pkg.git
+[submodule "vehicle-code/aws-deepracer-usb-monitor-pkg"]
+	path = vehicle-code/aws-deepracer-usb-monitor-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-usb-monitor-pkg.git
+[submodule "vehicle-code/aws-deepracer-status-led-pkg"]
+	path = vehicle-code/aws-deepracer-status-led-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-status-led-pkg.git
+[submodule "vehicle-code/aws-deepracer-i2c-pkg"]
+	path = vehicle-code/aws-deepracer-i2c-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-i2c-pkg.git
+[submodule "vehicle-code/aws-deepracer-device-info-pkg"]
+	path = vehicle-code/aws-deepracer-device-info-pkg
+	url = https://github.com/aws-deepracer/aws-deepracer-device-info-pkg.git
+[submodule "vehicle-code/aws-deepracer-follow-the-leader-sample-project"]
+	path = vehicle-code/aws-deepracer-follow-the-leader-sample-project
+	url = https://github.com/aws-deepracer/aws-deepracer-follow-the-leader-sample-project.git
+[submodule "vehicle-code/aws-deepracer-mapping-sample-project"]
+	path = vehicle-code/aws-deepracer-mapping-sample-project
+	url = https://github.com/aws-deepracer/aws-deepracer-mapping-sample-project.git
+[submodule "vehicle-code/aws-deepracer-offroad-sample-project"]
+	path = vehicle-code/aws-deepracer-offroad-sample-project
+	url = https://github.com/aws-deepracer/aws-deepracer-offroad-sample-project.git
+[submodule "training-code/deepracer-on-aws"]
+	path = training-code/deepracer-on-aws
+	url = https://github.com/aws-solutions/deepracer-on-aws.git
+[submodule "training-code/deepsim"]
+	path = training-code/deepsim
+	url = https://github.com/aws-deepracer/deepsim.git
+[submodule "training-code/deepracer-env"]
+	path = training-code/deepracer-env
+	url = https://github.com/aws-deepracer/deepracer-env.git
+[submodule "training-code/deepracer-env-config"]
+	path = training-code/deepracer-env-config
+	url = https://github.com/aws-deepracer/deepracer-env-config.git
+[submodule "training-code/deepracer-env-state"]
+	path = training-code/deepracer-env-state
+	url = https://github.com/aws-deepracer/deepracer-env-state.git
+[submodule "training-code/deepracer-track-geometry"]
+	path = training-code/deepracer-track-geometry
+	url = https://github.com/aws-deepracer/deepracer-track-geometry.git
+[submodule "training-code/ude"]
+	path = training-code/ude
+	url = https://github.com/aws-deepracer/ude.git
+[submodule "training-code/ude-gym-bridge"]
+	path = training-code/ude-gym-bridge
+	url = https://github.com/aws-deepracer/ude-gym-bridge.git
+[submodule "training-code/ude-ros-bridge"]
+	path = training-code/ude-ros-bridge
+	url = https://github.com/aws-deepracer/ude-ros-bridge.git
+[submodule "training-code/aws-deepracer-notebooks"]
+	path = training-code/aws-deepracer-notebooks
+	url = https://github.com/aws-deepracer/aws-deepracer-notebooks.git
+[submodule "training-code/deepracer-compat-reward-function"]
+	path = training-code/deepracer-compat-reward-function
+	url = https://github.com/aws-deepracer/deepracer-compat-reward-function.git

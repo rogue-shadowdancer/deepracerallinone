@@ -1,0 +1,4 @@
+interface:
+  display_name: "DeepRacer Open Source Navigator"
+  short_description: "Navigate AWS DeepRacer open-source vehicle and training code."
+  default_prompt: "Find the relevant AWS DeepRacer open-source repository, documentation, and setup path for a vehicle-side or training-side task."
