@@ -45,10 +45,16 @@ body {
 
 .topbar nav {
   display: flex;
+  align-items: center;
   gap: 14px;
+  flex-wrap: wrap;
 }
 
-.page {
+.topbar form {
+  margin: 0;
+}
+
+main {
   width: min(1180px, calc(100% - 32px));
   margin: 28px auto;
 }
@@ -104,10 +110,71 @@ h2 {
 }
 
 .inline-form {
-  display: grid;
-  grid-template-columns: minmax(130px, 1fr) minmax(220px, 2fr) minmax(160px, 1fr) auto;
+  display: flex;
+  align-items: flex-end;
+  flex-wrap: wrap;
   gap: 10px;
   margin-bottom: 16px;
+}
+
+.inline-form > * {
+  min-width: 150px;
+}
+
+.stacked-form {
+  display: grid;
+  gap: 8px;
+  min-width: 170px;
+}
+
+.panel-sub {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 14px;
+  margin: 0;
+}
+
+.two-column {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+  margin-bottom: 18px;
+}
+
+.grid-2,
+.grid-3,
+.grid-4,
+.summary-grid {
+  display: grid;
+  gap: 12px;
+}
+
+.grid-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.grid-3,
+.summary-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.grid-4 {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.summary-grid {
+  margin-bottom: 18px;
+}
+
+.summary-grid div {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 12px;
+}
+
+.summary-grid span {
+  display: block;
+  margin-bottom: 4px;
 }
 
 label {
@@ -140,6 +207,29 @@ button,
   font-weight: 700;
   text-decoration: none;
   cursor: pointer;
+}
+
+.link-button {
+  min-height: auto;
+  padding: 0;
+  background: transparent;
+  color: #ffffff;
+}
+
+.link-button:hover {
+  background: transparent;
+  text-decoration: underline;
+}
+
+.button-row {
+  display: flex;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.secondary-link {
+  background: #eef2f7;
+  color: var(--text);
 }
 
 button:hover,
@@ -197,7 +287,7 @@ th {
 .reject-form,
 .dispatch-form {
   display: grid;
-  grid-template-columns: 1fr auto;
+  grid-template-columns: 1fr 1fr auto;
   gap: 8px;
 }
 
@@ -218,7 +308,12 @@ th {
 
   .inline-form,
   .reject-form,
-  .dispatch-form {
+  .dispatch-form,
+  .two-column,
+  .grid-2,
+  .grid-3,
+  .grid-4,
+  .summary-grid {
     grid-template-columns: 1fr;
   }
 

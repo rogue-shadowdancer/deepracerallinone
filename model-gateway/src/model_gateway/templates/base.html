@@ -1,27 +1,44 @@
 <!doctype html>
 <html lang="en">
-  <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1">
-    <title>{{ title or "DeepRacer Model Gateway" }}</title>
-    <link rel="stylesheet" href="{{ url_for('static', path='styles.css') }}">
-  </head>
-  <body>
-    <header class="topbar">
-      <a class="brand" href="/">DeepRacer Model Gateway</a>
-      <nav>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>DeepRacer Model Gateway</title>
+  <link rel="stylesheet" href="/static/styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <a class="brand" href="/">DeepRacer Gateway</a>
+    <nav>
+      {% if current_user %}
+        <a href="/dashboard">Dashboard</a>
+        <a href="/teams">Team</a>
         <a href="/upload">Upload</a>
-        <a href="/admin">Admin</a>
-      </nav>
-    </header>
-    <main class="page">
-      {% if notice %}
-        <div class="notice">{{ notice }}</div>
+        <form method="post" action="/logout"><button class="link-button" type="submit">Logout</button></form>
+      {% elif current_admin %}
+        <a href="/admin">Queue</a>
+        <a href="/admin/users">Users</a>
+        <a href="/admin/teams">Teams</a>
+        <a href="/admin/vehicles">Vehicles</a>
+        <form method="post" action="/admin/logout"><button class="link-button" type="submit">Logout</button></form>
+      {% else %}
+        <a href="/login">User Login</a>
+        <a href="/register">Register</a>
+        <a href="/admin/login">Admin</a>
       {% endif %}
-      {% if error %}
-        <div class="error">{{ error }}</div>
-      {% endif %}
-      {% block content %}{% endblock %}
-    </main>
-  </body>
+    </nav>
+  </header>
+  <main>
+    {% if request.query_params.get("notice") or notice %}
+      <div class="notice">{{ request.query_params.get("notice") or notice }}</div>
+    {% endif %}
+    {% if request.query_params.get("error") or error %}
+      <div class="error">{{ request.query_params.get("error") or error }}</div>
+    {% endif %}
+    {% if credential_warning and current_admin %}
+      <div class="warning">GATEWAY_CREDENTIAL_SECRET is not set. Vehicle credentials are stored with development-only encoding.</div>
+    {% endif %}
+    {% block content %}{% endblock %}
+  </main>
+</body>
 </html>

@@ -19,11 +19,15 @@ from model_gateway.config import Settings
 def settings(tmp_path: Path) -> Settings:
     return Settings(
         data_dir=tmp_path / "data",
-        admin_password="test-admin",
+        bootstrap_admin_username="admin",
+        bootstrap_admin_password="test-admin",
         session_secret="test-secret",
+        credential_secret="test-credential-secret",
         max_upload_bytes=1024 * 1024,
         install_timeout_seconds=1,
         install_poll_seconds=0,
+        ssh_retry_count=1,
+        ssh_chunk_bytes=128,
     )
 
 

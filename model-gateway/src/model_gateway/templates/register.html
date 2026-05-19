@@ -1,0 +1,25 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel narrow">
+  <h1>Register</h1>
+  {% if registration_enabled %}
+    <form method="post" action="/register" class="form-grid">
+      <label>
+        Username
+        <input name="username" required maxlength="80" autocomplete="username">
+      </label>
+      <label>
+        Display name
+        <input name="display_name" required maxlength="120">
+      </label>
+      <label>
+        Password
+        <input name="password" type="password" required minlength="6" autocomplete="new-password">
+      </label>
+      <button type="submit">Submit registration</button>
+    </form>
+  {% else %}
+    <p class="muted">Self registration is currently closed. Ask an administrator for an account.</p>
+  {% endif %}
+</section>
+{% endblock %}

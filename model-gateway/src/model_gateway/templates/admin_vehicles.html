@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Vehicles</h1>
+  <form method="post" action="/admin/vehicles" class="form-grid vehicle-form">
+    <div class="grid-3">
+      <label>Name <input name="name" required></label>
+      <label>Delivery mode
+        <select name="delivery_mode">
+          <option value="auto">Auto</option>
+          <option value="console_api">Console API</option>
+          <option value="ssh">SSH</option>
+        </select>
+      </label>
+      <label>Notes <input name="notes"></label>
+    </div>
+    <div class="grid-2">
+      <label>Console URL <input name="console_url" placeholder="http://192.168.0.42"></label>
+      <label>Console password <input name="console_password" type="password"></label>
+    </div>
+    <div class="grid-4">
+      <label>SSH host <input name="ssh_host" placeholder="192.168.0.42"></label>
+      <label>SSH port <input name="ssh_port" type="number" value="22"></label>
+      <label>SSH username <input name="ssh_username"></label>
+      <label>SSH password <input name="ssh_password" type="password"></label>
+    </div>
+    <div class="grid-2">
+      <label>SSH private key path <input name="ssh_private_key_path"></label>
+      <label>Remote artifact root <input name="ssh_remote_artifact_root" value="/opt/aws/deepracer/artifacts"></label>
+    </div>
+    <label>
+      SSH install command template
+      <textarea name="ssh_install_command_template" rows="3" placeholder="Leave blank for default ROS2 console_model_action command"></textarea>
+    </label>
+    <button type="submit">Save vehicle</button>
+  </form>
+</section>
+
+<section class="panel">
+  <h2>Configured vehicles</h2>
+  <table>
+    <thead><tr><th>Name</th><th>Mode</th><th>Console</th><th>SSH</th><th>Credential</th><th>Actions</th></tr></thead>
+    <tbody>
+      {% for vehicle in vehicles %}
+        <tr>
+          <td>{{ vehicle.name }}</td>
+          <td>{{ vehicle.delivery_mode }}</td>
+          <td>
+            {% if vehicle.console_url %}
+              <a href="{{ vehicle.console_url }}" target="_blank" rel="noreferrer">{{ vehicle.console_url }}</a>
+            {% endif %}
+          </td>
+          <td>{{ vehicle.ssh_username }}{% if vehicle.ssh_host %}@{{ vehicle.ssh_host }}:{{ vehicle.ssh_port }}{% endif %}</td>
+          <td>
+            Console {{ "configured" if vehicle.has_console_password else "not set" }}<br>
+            SSH {{ "configured" if vehicle.has_ssh_password or vehicle.has_ssh_key else "not set" }}
+          </td>
+          <td class="actions">
+            <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-console"><button class="secondary" type="submit">Test Console</button></form>
+            <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-ssh"><button class="secondary" type="submit">Test SSH</button></form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">No vehicles configured.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

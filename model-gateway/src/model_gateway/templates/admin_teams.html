@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Teams</h1>
+  <form method="post" action="/admin/settings/registration" class="inline-form">
+    <select name="registration_enabled">
+      <option value="false" {% if not registration_enabled %}selected{% endif %}>Registration closed</option>
+      <option value="true" {% if registration_enabled %}selected{% endif %}>Registration open</option>
+    </select>
+    <input name="default_team_max_members" placeholder="Default max members" value="{{ default_team_max_members }}">
+    <button type="submit">Save settings</button>
+  </form>
+  <form method="post" action="/admin/teams" class="inline-form">
+    <input name="name" placeholder="Team name" required>
+    <input name="max_members" placeholder="Max members">
+    <button type="submit">Create team</button>
+  </form>
+  <table>
+    <thead><tr><th>Team</th><th>Join code</th><th>Members</th><th>Settings</th><th>Add or move member</th></tr></thead>
+    <tbody>
+      {% for team in teams %}
+        <tr>
+          <td>
+            <strong>{{ team.name }}</strong><br>
+            <span class="muted">{{ team.status }}</span>
+          </td>
+          <td><code>{{ team.join_code }}</code></td>
+          <td>
+            {{ team.member_count }}{% if team.max_members %}/{{ team.max_members }}{% endif %}
+            {% for member in team.members %}
+              <br><span class="muted">{{ member.display_name }} ({{ member.role }})</span>
+            {% endfor %}
+          </td>
+          <td>
+            <form method="post" action="/admin/teams/{{ team.id }}/update" class="stacked-form">
+              <input name="name" value="{{ team.name }}" required>
+              <input name="max_members" value="{{ team.max_members or '' }}" placeholder="Max">
+              <select name="status">
+                <option value="active" {% if team.status == "active" %}selected{% endif %}>Active</option>
+                <option value="disabled" {% if team.status == "disabled" %}selected{% endif %}>Disabled</option>
+              </select>
+              <button class="secondary" type="submit">Save</button>
+            </form>
+          </td>
+          <td>
+            <form method="post" action="/admin/teams/{{ team.id }}/members" class="stacked-form">
+              <select name="user_id" required>
+                <option value="">User</option>
+                {% for user in users %}
+                  {% if user.role == "user" and user.status == "active" %}
+                    <option value="{{ user.id }}">{{ user.username }}</option>
+                  {% endif %}
+                {% endfor %}
+              </select>
+              <select name="role">
+                <option value="member">Member</option>
+                <option value="leader">Leader</option>
+              </select>
+              <button class="secondary" type="submit">Move</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No teams.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

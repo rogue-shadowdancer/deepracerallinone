@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Users</h1>
+  {% if generated %}
+    <div class="notice">Generated credential: <code>{{ generated }}</code></div>
+  {% endif %}
+  <form method="post" action="/admin/users" class="inline-form">
+    <input name="username" placeholder="username" required>
+    <input name="display_name" placeholder="display name">
+    <select name="role">
+      <option value="user">User</option>
+      <option value="admin">Admin</option>
+    </select>
+    <select name="status">
+      <option value="active">Active</option>
+      <option value="pending">Pending</option>
+    </select>
+    <input name="password" placeholder="password or auto">
+    <button type="submit">Create</button>
+  </form>
+  <div class="two-column">
+    <form method="post" action="/admin/users/batch" class="panel-sub form-grid">
+      <h2>Batch create</h2>
+      <label>Prefix <input name="prefix" value="racer" required></label>
+      <label>Count <input name="count" type="number" min="1" max="500" value="10" required></label>
+      <label>Team name <input name="team_name" placeholder="optional"></label>
+      <button type="submit">Download CSV</button>
+    </form>
+    <form method="post" action="/admin/users/import" enctype="multipart/form-data" class="panel-sub form-grid">
+      <h2>Import CSV</h2>
+      <label>CSV file <input name="file" type="file" accept=".csv,text/csv" required></label>
+      <button type="submit">Import and download passwords</button>
+    </form>
+  </div>
+  <table>
+    <thead>
+      <tr><th>User</th><th>Role</th><th>Status</th><th>Team</th><th>Sessions</th><th>Actions</th></tr>
+    </thead>
+    <tbody>
+      {% for user in users %}
+        <tr>
+          <td>{{ user.display_name }}<br><span class="muted">{{ user.username }}</span></td>
+          <td>{{ user.role }}</td>
+          <td><span class="status">{{ user.status }}</span></td>
+          <td>{{ user.team_name or "" }}</td>
+          <td>{{ user.active_sessions }}</td>
+          <td class="actions">
+            {% if user.status == "pending" %}
+              <form method="post" action="/admin/users/{{ user.id }}/approve"><button class="secondary" type="submit">Approve</button></form>
+            {% endif %}
+            {% if user.status != "disabled" %}
+              <form method="post" action="/admin/users/{{ user.id }}/disable"><button class="secondary" type="submit">Disable</button></form>
+            {% endif %}
+            <form method="post" action="/admin/users/{{ user.id }}/reset-password"><button class="secondary" type="submit">Reset password</button></form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Sessions</h2>
+  <table>
+    <thead><tr><th>ID</th><th>User</th><th>Role</th><th>Last seen</th><th>Status</th><th></th></tr></thead>
+    <tbody>
+      {% for session in sessions %}
+        <tr>
+          <td>#{{ session.id }}</td>
+          <td>{{ session.username }}</td>
+          <td>{{ session.role }}</td>
+          <td>{{ session.last_seen_at }}</td>
+          <td>{{ "revoked" if session.revoked_at else "active" }}</td>
+          <td>
+            {% if not session.revoked_at %}
+              <form method="post" action="/admin/sessions/{{ session.id }}/revoke"><button class="secondary" type="submit">Revoke</button></form>
+            {% endif %}
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="6" class="muted">No sessions.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Team</h1>
+  {% if team %}
+    <div class="summary-grid">
+      <div><span class="muted">Name</span><strong>{{ team.name }}</strong></div>
+      <div><span class="muted">Join code</span><code>{{ team.join_code }}</code></div>
+      <div><span class="muted">Members</span><strong>{{ team.member_count }}{% if team.max_members %}/{{ team.max_members }}{% endif %}</strong></div>
+    </div>
+    <table>
+      <thead><tr><th>Member</th><th>Username</th><th>Role</th></tr></thead>
+      <tbody>
+        {% for member in team.members %}
+          <tr><td>{{ member.display_name }}</td><td>{{ member.username }}</td><td>{{ member.role }}</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <form method="post" action="/teams/leave">
+      <button class="secondary" type="submit">Leave team</button>
+    </form>
+  {% else %}
+    <div class="two-column">
+      <form method="post" action="/teams" class="panel-sub form-grid">
+        <h2>Create team</h2>
+        <label>
+          Team name
+          <input name="name" required maxlength="120">
+        </label>
+        <button type="submit">Create</button>
+      </form>
+      <form method="post" action="/teams/join" class="panel-sub form-grid">
+        <h2>Join team</h2>
+        <label>
+          Join code
+          <input name="join_code" required maxlength="20">
+        </label>
+        <button type="submit">Join</button>
+      </form>
+    </div>
+  {% endif %}
+</section>
+{% endblock %}

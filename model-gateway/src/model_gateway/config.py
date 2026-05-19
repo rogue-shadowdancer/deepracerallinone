@@ -15,12 +15,22 @@ def _int_env(name: str, default: int) -> int:
 @dataclass(frozen=True)
 class Settings:
     data_dir: Path = field(default_factory=lambda: Path(os.getenv("GATEWAY_DATA_DIR", "data")))
-    admin_password: str = field(default_factory=lambda: os.getenv("GATEWAY_ADMIN_PASSWORD", "admin"))
     session_secret: str = field(default_factory=lambda: os.getenv("GATEWAY_SESSION_SECRET", "dev-secret-change-me"))
+    bootstrap_admin_username: str = field(default_factory=lambda: os.getenv("GATEWAY_BOOTSTRAP_ADMIN_USERNAME", "admin"))
+    bootstrap_admin_password: str = field(
+        default_factory=lambda: os.getenv(
+            "GATEWAY_BOOTSTRAP_ADMIN_PASSWORD",
+            os.getenv("GATEWAY_ADMIN_PASSWORD", "admin"),
+        )
+    )
+    credential_secret: str = field(default_factory=lambda: os.getenv("GATEWAY_CREDENTIAL_SECRET", ""))
     max_upload_bytes: int = field(default_factory=lambda: _int_env("GATEWAY_MAX_UPLOAD_BYTES", 1024 * 1024 * 1024))
     vehicle_timeout_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_VEHICLE_TIMEOUT_SECONDS", 30))
     install_timeout_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_INSTALL_TIMEOUT_SECONDS", 180))
     install_poll_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_INSTALL_POLL_SECONDS", 3))
+    ssh_timeout_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_SSH_TIMEOUT_SECONDS", 20))
+    ssh_retry_count: int = field(default_factory=lambda: _int_env("GATEWAY_SSH_RETRY_COUNT", 3))
+    ssh_chunk_bytes: int = field(default_factory=lambda: _int_env("GATEWAY_SSH_CHUNK_BYTES", 1024 * 1024))
 
     @property
     def db_path(self) -> Path:

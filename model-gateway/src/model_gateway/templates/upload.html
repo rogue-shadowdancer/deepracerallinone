@@ -2,29 +2,26 @@
 {% block content %}
 <section class="panel">
   <h1>Upload model</h1>
-  <p class="muted">Submit a DeepRacer physical model export as a <code>.tar.gz</code> file. An admin will review and dispatch it to a car.</p>
-  <form method="post" action="/upload" enctype="multipart/form-data" class="form-grid">
-    <label>
-      Team name
-      <input name="team_name" value="{{ team_name or '' }}" required maxlength="120">
-    </label>
-    <label>
-      Racer name
-      <input name="racer_name" value="{{ racer_name or '' }}" required maxlength="120">
-    </label>
-    <label>
-      Model name
-      <input name="model_name" value="{{ model_name or '' }}" required maxlength="160">
-    </label>
-    <label>
-      Notes
-      <textarea name="notes" rows="3" maxlength="1000">{{ notes or '' }}</textarea>
-    </label>
-    <label>
-      Physical model .tar.gz
-      <input name="file" type="file" accept=".gz,.tar.gz,application/gzip" required>
-    </label>
-    <button type="submit">Submit model</button>
-  </form>
+  {% if not team %}
+    <p class="muted">Join or create a team before uploading a DeepRacer physical model.</p>
+    <a class="button-link" href="/teams">Open team page</a>
+  {% else %}
+    <p class="muted">Submitting as <strong>{{ user.display_name }}</strong> for <strong>{{ team.name }}</strong>.</p>
+    <form method="post" action="/upload" enctype="multipart/form-data" class="form-grid">
+      <label>
+        Model name
+        <input name="model_name" value="{{ model_name or '' }}" required maxlength="160">
+      </label>
+      <label>
+        Notes
+        <textarea name="notes" rows="3" maxlength="1000">{{ notes or '' }}</textarea>
+      </label>
+      <label>
+        Physical model .tar.gz
+        <input name="file" type="file" accept=".gz,.tar.gz,application/gzip" required>
+      </label>
+      <button type="submit">Submit model</button>
+    </form>
+  {% endif %}
 </section>
 {% endblock %}

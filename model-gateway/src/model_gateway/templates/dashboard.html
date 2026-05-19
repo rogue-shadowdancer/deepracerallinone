@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>{{ user.display_name }}</h1>
+  {% if team %}
+    <p class="muted">Team: <strong>{{ team.name }}</strong> · Join code: <code>{{ team.join_code }}</code></p>
+  {% else %}
+    <p class="muted">You are not in a team yet. Create or join one before uploading a model.</p>
+  {% endif %}
+</section>
+
+<section class="panel">
+  <div class="section-heading">
+    <h2>Your submissions</h2>
+    {% if team %}<a class="button-link" href="/upload">Upload model</a>{% endif %}
+  </div>
+  <table>
+    <thead>
+      <tr><th>ID</th><th>Model</th><th>Status</th><th>SHA256</th><th>Uploaded</th></tr>
+    </thead>
+    <tbody>
+      {% for submission in submissions %}
+        <tr>
+          <td>#{{ submission.id }}</td>
+          <td>{{ submission.model_name }}<br><span class="muted">{{ submission.original_filename }}</span></td>
+          <td><span class="status">{{ submission.status }}</span></td>
+          <td><code>{{ submission.sha256[:12] }}</code></td>
+          <td>{{ submission.created_at }}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No submissions yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}
