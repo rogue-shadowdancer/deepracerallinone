@@ -17,6 +17,8 @@ The gateway does not run on the car or the training stack. The default delivery 
 - Console API adapter for `/api/uploadModels`, `/api/is_model_installed`, and `/api/isModelLoading`.
 - SSH adapter with rsync preference, SFTP resume fallback, retry, keepalive, remote SHA256 verification, and install command execution.
 - No automatic model activation. The gateway installs models only.
+- CSRF protection, session expiry, login rate limiting, competition-mode config checks, and admin audit logs.
+- Persistent dispatch worker, retry scheduling, vehicle preflight records, live admin status JSON, events, rounds, submission versions, candidate marking, and CSV exports.
 
 ## Setup
 
@@ -34,6 +36,7 @@ $env:GATEWAY_BOOTSTRAP_ADMIN_USERNAME="admin"
 $env:GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="replace-this"
 $env:GATEWAY_SESSION_SECRET="replace-with-a-long-random-value"
 $env:GATEWAY_CREDENTIAL_SECRET="replace-with-a-long-random-value"
+$env:GATEWAY_COMPETITION_MODE="true"
 ```
 
 Run the server:
@@ -57,6 +60,10 @@ If no admin exists yet, startup creates one from `GATEWAY_BOOTSTRAP_ADMIN_USERNA
 | `GATEWAY_BOOTSTRAP_ADMIN_PASSWORD` | `admin` | Initial admin password. `GATEWAY_ADMIN_PASSWORD` is still accepted as a compatibility fallback. |
 | `GATEWAY_SESSION_SECRET` | `dev-secret-change-me` | Secret for session cookie signing and environment separation. |
 | `GATEWAY_CREDENTIAL_SECRET` | empty | Encrypts stored vehicle Console and SSH passwords. Empty means development-only encoding. |
+| `GATEWAY_COMPETITION_MODE` | `false` | When true, blocks default admin credentials and missing secrets at startup. |
+| `GATEWAY_SESSION_MAX_AGE_SECONDS` | `28800` | Max session lifetime before login is required again. |
+| `GATEWAY_LOGIN_RATE_LIMIT` | `5` | Failed login attempts allowed during the lockout window. |
+| `GATEWAY_COOKIE_SECURE` | `false` | Set true when serving through HTTPS. |
 | `GATEWAY_DATA_DIR` | `data` | SQLite database and upload storage directory. |
 | `GATEWAY_MAX_UPLOAD_BYTES` | `1073741824` | Max upload size, default 1 GB. |
 | `GATEWAY_VEHICLE_TIMEOUT_SECONDS` | `30` | HTTP timeout for vehicle Console API calls. |
@@ -65,6 +72,8 @@ If no admin exists yet, startup creates one from `GATEWAY_BOOTSTRAP_ADMIN_USERNA
 | `GATEWAY_SSH_TIMEOUT_SECONDS` | `20` | SSH connection and command timeout. |
 | `GATEWAY_SSH_RETRY_COUNT` | `3` | SSH transfer/install retry count. |
 | `GATEWAY_SSH_CHUNK_BYTES` | `1048576` | SFTP chunk size. |
+| `GATEWAY_DISPATCH_WORKER_ENABLED` | `true` | Enables the persistent queued dispatch worker. |
+| `GATEWAY_DISPATCH_MAX_RETRIES` | `1` | Worker-level dispatch retries after all selected delivery modes fail. |
 
 ## Admin Workflow
 
@@ -73,7 +82,10 @@ If no admin exists yet, startup creates one from `GATEWAY_BOOTSTRAP_ADMIN_USERNA
 3. Open `/admin/users` to create admins/users, batch-generate users, import CSV users, approve self-registered users, reset passwords, or revoke sessions.
 4. Open `/admin/teams` to create teams, change team limits, and move users between teams.
 5. Open `/admin/vehicles` and register each car.
-6. Review uploads in `/admin`, approve or reject them, select a vehicle and delivery mode, then dispatch.
+6. Open `/admin/events` to manage competition events and rounds, including upload and dispatch limits.
+7. Open `/admin/health` to run vehicle preflight checks before races.
+8. Review uploads in `/admin`, approve or reject them, select a vehicle and delivery mode, then dispatch.
+9. Use `/admin/audit` and CSV export links for after-action records.
 
 Batch CSV format:
 
@@ -127,6 +139,37 @@ Template variables:
 - `{filename}`
 
 `auto` mode tries Console API first. If Console API fails and SSH is configured, it retries over SSH and records both attempts.
+
+Configure `SSH host key SHA256` on the vehicle when available. If it is set, the gateway verifies the host key before executing SSH operations.
+
+## Maintenance
+
+Back up data:
+
+```powershell
+python -m model_gateway.maintenance backup .\backups
+```
+
+Restore data:
+
+```powershell
+python -m model_gateway.maintenance restore .\backups\deepracer-gateway-backup-YYYYMMDDTHHMMSSZ.tar.gz
+```
+
+Remove failed uploads older than seven days:
+
+```powershell
+python -m model_gateway.maintenance cleanup --older-than-days 7
+```
+
+## Competition Checklist
+
+- Set `GATEWAY_COMPETITION_MODE=true`.
+- Replace `admin/admin`, `GATEWAY_SESSION_SECRET`, and `GATEWAY_CREDENTIAL_SECRET`.
+- Run `python -m pytest model-gateway/tests` before the event.
+- Register vehicles, run preflight, and confirm Console API or SSH delivery for each car.
+- Create the event and round before opening uploads.
+- Export users, teams, submissions, and dispatches after the event.
 
 ## Tests
 

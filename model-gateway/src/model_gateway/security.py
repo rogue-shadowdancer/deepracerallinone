@@ -19,6 +19,10 @@ class CredentialError(ValueError):
     """Raised when a stored vehicle credential cannot be decoded."""
 
 
+class PasswordPolicyError(ValueError):
+    """Raised when a user-supplied password is too weak for competition use."""
+
+
 def hash_password(password: str) -> str:
     if not password:
         raise ValueError("Password cannot be empty")
@@ -54,6 +58,17 @@ def generate_password(length: int = 14) -> str:
 def generate_join_code(length: int = 8) -> str:
     alphabet = string.ascii_uppercase + string.digits
     return "".join(secrets.choice(alphabet) for _ in range(length))
+
+
+def new_csrf_token() -> str:
+    return secrets.token_urlsafe(32)
+
+
+def validate_password_strength(password: str) -> None:
+    if len(password) < 8:
+        raise PasswordPolicyError("Password must be at least 8 characters")
+    if password.lower() in {"password", "admin", "deepracer", "12345678"}:
+        raise PasswordPolicyError("Password is too easy to guess")
 
 
 @dataclass(frozen=True)

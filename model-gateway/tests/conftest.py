@@ -11,7 +11,7 @@ from fastapi.testclient import TestClient
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from model_gateway.app import create_app
+from model_gateway.app import CSRF_COOKIE_NAME, create_app
 from model_gateway.config import Settings
 
 
@@ -28,12 +28,24 @@ def settings(tmp_path: Path) -> Settings:
         install_poll_seconds=0,
         ssh_retry_count=1,
         ssh_chunk_bytes=128,
+        dispatch_worker_enabled=False,
     )
 
 
 @pytest.fixture
 def client(settings: Settings) -> TestClient:
-    return TestClient(create_app(settings))
+    test_client = TestClient(create_app(settings))
+    original_post = test_client.post
+
+    def csrf_post(url, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if CSRF_COOKIE_NAME not in test_client.cookies:
+            test_client.get("/login")
+        headers = dict(kwargs.pop("headers", {}) or {})
+        headers.setdefault("x-csrf-token", test_client.cookies.get(CSRF_COOKIE_NAME, ""))
+        return original_post(url, *args, headers=headers, **kwargs)
+
+    test_client.post = csrf_post  # type: ignore[method-assign]
+    return test_client
 
 
 def make_model_tar(path: Path, *, unsafe_name: str | None = None, include_metadata: bool = True, include_pb: bool = True) -> Path:

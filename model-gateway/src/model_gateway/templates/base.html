@@ -3,6 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
   <title>DeepRacer Model Gateway</title>
   <link rel="stylesheet" href="/static/styles.css">
 </head>
@@ -20,6 +21,9 @@
         <a href="/admin/users">Users</a>
         <a href="/admin/teams">Teams</a>
         <a href="/admin/vehicles">Vehicles</a>
+        <a href="/admin/events">Events</a>
+        <a href="/admin/health">Health</a>
+        <a href="/admin/audit">Audit</a>
         <form method="post" action="/admin/logout"><button class="link-button" type="submit">Logout</button></form>
       {% else %}
         <a href="/login">User Login</a>
@@ -40,5 +44,20 @@
     {% endif %}
     {% block content %}{% endblock %}
   </main>
+  <script>
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content || "";
+    document.querySelectorAll('form[method="post"], form[method="POST"]').forEach((form) => {
+      if (!form.querySelector('input[name="csrf_token"]')) {
+        const input = document.createElement("input");
+        input.type = "hidden";
+        input.name = "csrf_token";
+        input.value = csrfToken;
+        form.prepend(input);
+      }
+      const action = new URL(form.getAttribute("action") || window.location.href, window.location.href);
+      action.searchParams.set("csrf_token", csrfToken);
+      form.setAttribute("action", action.pathname + action.search);
+    });
+  </script>
 </body>
 </html>

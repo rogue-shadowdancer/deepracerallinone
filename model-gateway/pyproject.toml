@@ -15,6 +15,9 @@ dependencies = [
     "uvicorn>=0.30.0,<0.34.0",
 ]
 
+[project.scripts]
+model-gateway-maintenance = "model_gateway.maintenance:main"
+
 [project.optional-dependencies]
 test = [
     "pytest>=6.2.0",

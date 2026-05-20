@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Events and rounds</h1>
+  <form method="post" action="/admin/events" class="inline-form">
+    <input name="name" placeholder="Event name" required>
+    <select name="status">
+      <option value="active">Active</option>
+      <option value="closed">Closed</option>
+    </select>
+    <button type="submit">Create event</button>
+  </form>
+  <table>
+    <thead><tr><th>Event</th><th>Status</th><th>Update</th></tr></thead>
+    <tbody>
+      {% for event in events %}
+        <tr>
+          <td>{{ event.name }}</td>
+          <td>{{ event.status }}</td>
+          <td>
+            <form method="post" action="/admin/events/{{ event.id }}/update" class="inline-form">
+              <input name="name" value="{{ event.name }}" required>
+              <select name="status">
+                <option value="active" {% if event.status == "active" %}selected{% endif %}>Active</option>
+                <option value="closed" {% if event.status == "closed" %}selected{% endif %}>Closed</option>
+              </select>
+              <button class="secondary" type="submit">Save</button>
+            </form>
+          </td>
+        </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+
+<section class="panel">
+  <h2>Rounds</h2>
+  <form method="post" action="/admin/rounds" class="inline-form">
+    <select name="event_id" required>
+      {% for event in events %}
+        <option value="{{ event.id }}">{{ event.name }}</option>
+      {% endfor %}
+    </select>
+    <input name="name" placeholder="Round name" required>
+    <select name="status">
+      <option value="open">Open</option>
+      <option value="closed">Closed</option>
+    </select>
+    <input name="upload_deadline_at" placeholder="Deadline ISO time">
+    <input name="max_submissions_per_team" placeholder="Max uploads/team">
+    <input name="max_dispatches_per_team" placeholder="Max dispatch/team">
+    <button type="submit">Create round</button>
+  </form>
+  <table>
+    <thead><tr><th>Event</th><th>Round</th><th>Status</th><th>Limits</th><th>Update</th></tr></thead>
+    <tbody>
+      {% for round in rounds %}
+        <tr>
+          <td>{{ round.event_name }}</td>
+          <td>{{ round.name }}</td>
+          <td>{{ round.status }}</td>
+          <td>uploads {{ round.max_submissions_per_team or "-" }} / dispatch {{ round.max_dispatches_per_team or "-" }}<br><span class="muted">{{ round.upload_deadline_at or "no deadline" }}</span></td>
+          <td>
+            <form method="post" action="/admin/rounds/{{ round.id }}/update" class="stacked-form">
+              <select name="event_id">
+                {% for event in events %}
+                  <option value="{{ event.id }}" {% if event.id == round.event_id %}selected{% endif %}>{{ event.name }}</option>
+                {% endfor %}
+              </select>
+              <input name="name" value="{{ round.name }}" required>
+              <select name="status">
+                <option value="open" {% if round.status == "open" %}selected{% endif %}>Open</option>
+                <option value="closed" {% if round.status == "closed" %}selected{% endif %}>Closed</option>
+              </select>
+              <input name="upload_deadline_at" value="{{ round.upload_deadline_at or '' }}" placeholder="Deadline ISO time">
+              <input name="max_submissions_per_team" value="{{ round.max_submissions_per_team or '' }}" placeholder="Max uploads/team">
+              <input name="max_dispatches_per_team" value="{{ round.max_dispatches_per_team or '' }}" placeholder="Max dispatch/team">
+              <button class="secondary" type="submit">Save</button>
+            </form>
+          </td>
+        </tr>
+      {% else %}
+        <tr><td colspan="5" class="muted">No rounds.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

@@ -2,6 +2,16 @@
 {% block content %}
 <section class="panel">
   <h1>Teams</h1>
+  <form method="get" action="/admin/teams" class="inline-form">
+    <input name="q" placeholder="Search team or code" value="{{ filters.q }}">
+    <select name="status">
+      <option value="">Any status</option>
+      <option value="active" {% if filters.status == "active" %}selected{% endif %}>Active</option>
+      <option value="disabled" {% if filters.status == "disabled" %}selected{% endif %}>Disabled</option>
+    </select>
+    <button class="secondary" type="submit">Filter</button>
+    <a class="button-link secondary-link" href="/admin/export/teams">Export teams</a>
+  </form>
   <form method="post" action="/admin/settings/registration" class="inline-form">
     <select name="registration_enabled">
       <option value="false" {% if not registration_enabled %}selected{% endif %}>Registration closed</option>

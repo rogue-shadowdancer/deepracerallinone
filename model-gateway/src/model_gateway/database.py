@@ -4,7 +4,7 @@ import json
 import sqlite3
 from contextlib import closing
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,13 @@ TEAM_LEADER = "leader"
 
 SETTING_REGISTRATION_ENABLED = "registration_enabled"
 SETTING_DEFAULT_TEAM_MAX_MEMBERS = "default_team_max_members"
+SETTING_SCHEMA_VERSION = "schema_version"
+CURRENT_SCHEMA_VERSION = "2"
+
+EVENT_ACTIVE = "active"
+EVENT_CLOSED = "closed"
+ROUND_OPEN = "open"
+ROUND_CLOSED = "closed"
 
 SUBMISSION_UPLOADED = "uploaded"
 SUBMISSION_APPROVED = "approved"
@@ -84,6 +91,9 @@ class NewSubmission:
     sha256: str
     size_bytes: int
     warning: str | None = None
+    round_id: int | None = None
+    version_number: int = 1
+    is_candidate: bool = True
 
 
 def utc_now() -> str:
@@ -125,12 +135,35 @@ def init_db(db_path: Path) -> None:
                 user_agent TEXT NOT NULL DEFAULT '',
                 created_at TEXT NOT NULL,
                 last_seen_at TEXT NOT NULL,
+                expires_at TEXT,
                 revoked_at TEXT
             );
 
             CREATE TABLE IF NOT EXISTS settings (
                 key TEXT PRIMARY KEY,
                 value TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS login_attempts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                username TEXT NOT NULL,
+                role TEXT,
+                remote_addr TEXT NOT NULL DEFAULT '',
+                succeeded INTEGER NOT NULL DEFAULT 0,
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS audit_logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                actor_username TEXT NOT NULL DEFAULT '',
+                actor_role TEXT NOT NULL DEFAULT '',
+                action TEXT NOT NULL,
+                target_type TEXT NOT NULL DEFAULT '',
+                target_id TEXT NOT NULL DEFAULT '',
+                message TEXT NOT NULL DEFAULT '',
+                remote_addr TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
             );
 
             CREATE TABLE IF NOT EXISTS teams (
@@ -153,10 +186,34 @@ def init_db(db_path: Path) -> None:
                 UNIQUE(user_id)
             );
 
+            CREATE TABLE IF NOT EXISTS events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                name TEXT NOT NULL UNIQUE,
+                status TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS rounds (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                event_id INTEGER NOT NULL REFERENCES events(id) ON DELETE CASCADE,
+                name TEXT NOT NULL,
+                status TEXT NOT NULL,
+                upload_deadline_at TEXT,
+                max_submissions_per_team INTEGER,
+                max_dispatches_per_team INTEGER,
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL,
+                UNIQUE(event_id, name)
+            );
+
             CREATE TABLE IF NOT EXISTS submissions (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 user_id INTEGER REFERENCES users(id),
                 team_id INTEGER REFERENCES teams(id),
+                round_id INTEGER REFERENCES rounds(id),
+                version_number INTEGER NOT NULL DEFAULT 1,
+                is_candidate INTEGER NOT NULL DEFAULT 1,
                 username_snapshot TEXT,
                 display_name_snapshot TEXT,
                 team_name_snapshot TEXT,
@@ -186,6 +243,7 @@ def init_db(db_path: Path) -> None:
                 ssh_username TEXT NOT NULL DEFAULT '',
                 ssh_password_encrypted TEXT,
                 ssh_private_key_path TEXT NOT NULL DEFAULT '',
+                ssh_host_key_sha256 TEXT NOT NULL DEFAULT '',
                 ssh_remote_artifact_root TEXT NOT NULL DEFAULT '/opt/aws/deepracer/artifacts',
                 ssh_install_command_template TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
@@ -201,6 +259,8 @@ def init_db(db_path: Path) -> None:
                 status TEXT NOT NULL,
                 message TEXT NOT NULL DEFAULT '',
                 cancel_requested INTEGER NOT NULL DEFAULT 0,
+                retry_count INTEGER NOT NULL DEFAULT 0,
+                next_retry_at TEXT,
                 created_at TEXT NOT NULL,
                 updated_at TEXT NOT NULL,
                 started_at TEXT,
@@ -213,29 +273,62 @@ def init_db(db_path: Path) -> None:
                 mode TEXT NOT NULL,
                 status TEXT NOT NULL,
                 message TEXT NOT NULL DEFAULT '',
+                error_type TEXT NOT NULL DEFAULT '',
+                attempt_number INTEGER NOT NULL DEFAULT 1,
+                duration_seconds REAL,
+                next_retry_at TEXT,
                 started_at TEXT NOT NULL,
                 finished_at TEXT
             );
 
+            CREATE TABLE IF NOT EXISTS vehicle_health_checks (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                console_status TEXT NOT NULL DEFAULT 'unknown',
+                ssh_status TEXT NOT NULL DEFAULT 'unknown',
+                rsync_status TEXT NOT NULL DEFAULT 'unknown',
+                disk_free_bytes INTEGER,
+                message TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
+            CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts(username, role, created_at);
+            CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
+            CREATE INDEX IF NOT EXISTS idx_rounds_status ON rounds(status);
+            CREATE INDEX IF NOT EXISTS idx_submissions_round ON submissions(round_id);
             CREATE INDEX IF NOT EXISTS idx_submissions_status ON submissions(status);
             CREATE INDEX IF NOT EXISTS idx_dispatches_vehicle_status ON dispatches(vehicle_id, status);
+            CREATE INDEX IF NOT EXISTS idx_dispatches_status_retry ON dispatches(status, next_retry_at);
             CREATE INDEX IF NOT EXISTS idx_dispatch_attempts_dispatch_id ON dispatch_attempts(dispatch_id);
+            CREATE INDEX IF NOT EXISTS idx_vehicle_health_vehicle ON vehicle_health_checks(vehicle_id, created_at);
             """
         )
         _migrate_existing_tables(connection)
         _ensure_setting(connection, SETTING_REGISTRATION_ENABLED, "false")
         _ensure_setting(connection, SETTING_DEFAULT_TEAM_MAX_MEMBERS, "")
+        _ensure_setting(connection, SETTING_SCHEMA_VERSION, CURRENT_SCHEMA_VERSION)
+        _ensure_default_event_round(connection)
         connection.commit()
 
 
 def _migrate_existing_tables(connection: sqlite3.Connection) -> None:
     _ensure_columns(
         connection,
+        "sessions",
+        {
+            "expires_at": "TEXT",
+        },
+    )
+    _ensure_columns(
+        connection,
         "submissions",
         {
             "user_id": "INTEGER REFERENCES users(id)",
             "team_id": "INTEGER REFERENCES teams(id)",
+            "round_id": "INTEGER REFERENCES rounds(id)",
+            "version_number": "INTEGER NOT NULL DEFAULT 1",
+            "is_candidate": "INTEGER NOT NULL DEFAULT 1",
             "username_snapshot": "TEXT",
             "display_name_snapshot": "TEXT",
             "team_name_snapshot": "TEXT",
@@ -253,6 +346,7 @@ def _migrate_existing_tables(connection: sqlite3.Connection) -> None:
             "ssh_username": "TEXT NOT NULL DEFAULT ''",
             "ssh_password_encrypted": "TEXT",
             "ssh_private_key_path": "TEXT NOT NULL DEFAULT ''",
+            "ssh_host_key_sha256": "TEXT NOT NULL DEFAULT ''",
             "ssh_remote_artifact_root": "TEXT NOT NULL DEFAULT '/opt/aws/deepracer/artifacts'",
             "ssh_install_command_template": "TEXT NOT NULL DEFAULT ''",
             "notes": "TEXT NOT NULL DEFAULT ''",
@@ -264,6 +358,18 @@ def _migrate_existing_tables(connection: sqlite3.Connection) -> None:
         {
             "requested_mode": "TEXT NOT NULL DEFAULT 'auto'",
             "cancel_requested": "INTEGER NOT NULL DEFAULT 0",
+            "retry_count": "INTEGER NOT NULL DEFAULT 0",
+            "next_retry_at": "TEXT",
+        },
+    )
+    _ensure_columns(
+        connection,
+        "dispatch_attempts",
+        {
+            "error_type": "TEXT NOT NULL DEFAULT ''",
+            "attempt_number": "INTEGER NOT NULL DEFAULT 1",
+            "duration_seconds": "REAL",
+            "next_retry_at": "TEXT",
         },
     )
 
@@ -277,6 +383,28 @@ def _ensure_columns(connection: sqlite3.Connection, table: str, columns: dict[st
 
 def _ensure_setting(connection: sqlite3.Connection, key: str, value: str) -> None:
     connection.execute("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)", (key, value))
+
+
+def _ensure_default_event_round(connection: sqlite3.Connection) -> None:
+    now = utc_now()
+    event = connection.execute("SELECT id FROM events ORDER BY id LIMIT 1").fetchone()
+    if event is None:
+        cursor = connection.execute(
+            "INSERT INTO events (name, status, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            ("Default Event", EVENT_ACTIVE, now, now),
+        )
+        event_id = int(cursor.lastrowid)
+    else:
+        event_id = int(event["id"])
+    round_row = connection.execute("SELECT id FROM rounds WHERE status = ? ORDER BY id LIMIT 1", (ROUND_OPEN,)).fetchone()
+    if round_row is None:
+        connection.execute(
+            """
+            INSERT INTO rounds (event_id, name, status, upload_deadline_at, max_submissions_per_team, max_dispatches_per_team, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, "Practice Round", ROUND_OPEN, None, None, None, now, now),
+        )
 
 
 def ensure_bootstrap_admin(db_path: Path, username: str, password: str) -> int:
@@ -373,29 +501,38 @@ def authenticate_user(db_path: Path, username: str, password: str, *, role: str 
     return user
 
 
-def create_session(db_path: Path, user_id: int, user_agent: str = "") -> str:
+def create_session(db_path: Path, user_id: int, user_agent: str = "", *, max_age_seconds: int | None = None) -> str:
     token = new_session_token()
     now = utc_now()
+    expires_at = None
+    if max_age_seconds:
+        expires_at = (datetime.now(timezone.utc) + timedelta(seconds=max_age_seconds)).isoformat(timespec="seconds")
     with closing(connect(db_path)) as connection:
         connection.execute(
             """
-            INSERT INTO sessions (user_id, token_hash, user_agent, created_at, last_seen_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO sessions (user_id, token_hash, user_agent, created_at, last_seen_at, expires_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (user_id, hash_session_token(token), user_agent[:300], now, now),
+            (user_id, hash_session_token(token), user_agent[:300], now, now, expires_at),
         )
         connection.commit()
     return token
 
 
-def get_user_by_session(db_path: Path, token: str | None, *, role: str | None = None) -> dict[str, Any] | None:
+def get_user_by_session(
+    db_path: Path,
+    token: str | None,
+    *,
+    role: str | None = None,
+    max_age_seconds: int | None = None,
+) -> dict[str, Any] | None:
     if not token:
         return None
     token_hash = hash_session_token(token)
     with closing(connect(db_path)) as connection:
         row = connection.execute(
             """
-            SELECT u.*, s.id AS session_id
+            SELECT u.*, s.id AS session_id, s.created_at AS session_created_at, s.expires_at AS session_expires_at
             FROM sessions s
             JOIN users u ON u.id = s.user_id
             WHERE s.token_hash = ? AND s.revoked_at IS NULL
@@ -405,6 +542,10 @@ def get_user_by_session(db_path: Path, token: str | None, *, role: str | None = 
         if row is None:
             return None
         user = dict(row)
+        if _session_expired(user.get("session_created_at"), user.get("session_expires_at"), max_age_seconds):
+            connection.execute("UPDATE sessions SET revoked_at = ? WHERE id = ?", (utc_now(), int(user["session_id"])))
+            connection.commit()
+            return None
         if user["status"] != USER_ACTIVE:
             return None
         if role is not None and user["role"] != role:
@@ -412,6 +553,98 @@ def get_user_by_session(db_path: Path, token: str | None, *, role: str | None = 
         connection.execute("UPDATE sessions SET last_seen_at = ? WHERE id = ?", (utc_now(), int(user["session_id"])))
         connection.commit()
         return user
+
+
+def _session_expired(created_at: str | None, expires_at: str | None, max_age_seconds: int | None) -> bool:
+    now = datetime.now(timezone.utc)
+    if expires_at:
+        try:
+            return datetime.fromisoformat(expires_at) <= now
+        except ValueError:
+            return True
+    if max_age_seconds:
+        try:
+            return datetime.fromisoformat(str(created_at)) + timedelta(seconds=max_age_seconds) <= now
+        except ValueError:
+            return True
+    return False
+
+
+def record_login_attempt(
+    db_path: Path,
+    username: str,
+    *,
+    role: str | None,
+    remote_addr: str,
+    succeeded: bool,
+) -> None:
+    with closing(connect(db_path)) as connection:
+        connection.execute(
+            "INSERT INTO login_attempts (username, role, remote_addr, succeeded, created_at) VALUES (?, ?, ?, ?, ?)",
+            (normalize_username(username), role, remote_addr[:100], 1 if succeeded else 0, utc_now()),
+        )
+        connection.commit()
+
+
+def login_locked(
+    db_path: Path,
+    username: str,
+    *,
+    role: str | None,
+    limit: int,
+    lockout_seconds: int,
+) -> bool:
+    since = (datetime.now(timezone.utc) - timedelta(seconds=lockout_seconds)).isoformat(timespec="seconds")
+    with closing(connect(db_path)) as connection:
+        row = connection.execute(
+            """
+            SELECT COUNT(*) AS failed_count
+            FROM login_attempts
+            WHERE username = ? AND COALESCE(role, '') = COALESCE(?, '') AND succeeded = 0 AND created_at >= ?
+            """,
+            (normalize_username(username), role, since),
+        ).fetchone()
+        return int(row["failed_count"] if row else 0) >= limit
+
+
+def record_audit_log(
+    db_path: Path,
+    *,
+    actor_user_id: int | None,
+    actor_username: str,
+    actor_role: str,
+    action: str,
+    target_type: str = "",
+    target_id: str | int = "",
+    message: str = "",
+    remote_addr: str = "",
+) -> int:
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO audit_logs (actor_user_id, actor_username, actor_role, action, target_type, target_id, message, remote_addr, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                actor_user_id,
+                actor_username[:120],
+                actor_role[:40],
+                action[:120],
+                target_type[:80],
+                str(target_id)[:80],
+                message[:1000],
+                remote_addr[:100],
+                utc_now(),
+            ),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def list_audit_logs(db_path: Path, limit: int = 100) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute("SELECT * FROM audit_logs ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
 
 
 def revoke_session(db_path: Path, token: str) -> None:
@@ -599,6 +832,200 @@ def default_team_max_members(db_path: Path) -> int | None:
     except ValueError:
         return None
     return value if value > 0 else None
+
+
+def create_event(db_path: Path, name: str, *, status: str = EVENT_ACTIVE) -> int:
+    if status not in {EVENT_ACTIVE, EVENT_CLOSED}:
+        raise GatewayStateError("Invalid event status")
+    name = name.strip()
+    if not name:
+        raise GatewayStateError("Event name is required")
+    now = utc_now()
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            "INSERT INTO events (name, status, created_at, updated_at) VALUES (?, ?, ?, ?)",
+            (name, status, now, now),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def update_event(db_path: Path, event_id: int, *, name: str, status: str) -> None:
+    if status not in {EVENT_ACTIVE, EVENT_CLOSED}:
+        raise GatewayStateError("Invalid event status")
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            "UPDATE events SET name = ?, status = ?, updated_at = ? WHERE id = ?",
+            (name.strip(), status, utc_now(), event_id),
+        )
+        if cursor.rowcount == 0:
+            raise GatewayStateError("Event not found")
+        connection.commit()
+
+
+def list_events(db_path: Path) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute("SELECT * FROM events ORDER BY id DESC").fetchall()
+        return [dict(row) for row in rows]
+
+
+def create_round(
+    db_path: Path,
+    event_id: int,
+    name: str,
+    *,
+    status: str = ROUND_OPEN,
+    upload_deadline_at: str = "",
+    max_submissions_per_team: int | None = None,
+    max_dispatches_per_team: int | None = None,
+) -> int:
+    if status not in {ROUND_OPEN, ROUND_CLOSED}:
+        raise GatewayStateError("Invalid round status")
+    name = name.strip()
+    if not name:
+        raise GatewayStateError("Round name is required")
+    now = utc_now()
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO rounds (event_id, name, status, upload_deadline_at, max_submissions_per_team, max_dispatches_per_team, created_at, updated_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (event_id, name, status, upload_deadline_at.strip() or None, max_submissions_per_team, max_dispatches_per_team, now, now),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def update_round(
+    db_path: Path,
+    round_id: int,
+    *,
+    event_id: int,
+    name: str,
+    status: str,
+    upload_deadline_at: str = "",
+    max_submissions_per_team: int | None = None,
+    max_dispatches_per_team: int | None = None,
+) -> None:
+    if status not in {ROUND_OPEN, ROUND_CLOSED}:
+        raise GatewayStateError("Invalid round status")
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE rounds
+            SET event_id = ?, name = ?, status = ?, upload_deadline_at = ?,
+                max_submissions_per_team = ?, max_dispatches_per_team = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                event_id,
+                name.strip(),
+                status,
+                upload_deadline_at.strip() or None,
+                max_submissions_per_team,
+                max_dispatches_per_team,
+                utc_now(),
+                round_id,
+            ),
+        )
+        if cursor.rowcount == 0:
+            raise GatewayStateError("Round not found")
+        connection.commit()
+
+
+def list_rounds(db_path: Path) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute(
+            """
+            SELECT r.*, e.name AS event_name
+            FROM rounds r
+            JOIN events e ON e.id = r.event_id
+            ORDER BY r.id DESC
+            """
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_active_round(db_path: Path) -> dict[str, Any] | None:
+    with closing(connect(db_path)) as connection:
+        row = connection.execute(
+            """
+            SELECT r.*, e.name AS event_name
+            FROM rounds r
+            JOIN events e ON e.id = r.event_id
+            WHERE r.status = ? AND e.status = ?
+            ORDER BY r.id DESC
+            LIMIT 1
+            """,
+            (ROUND_OPEN, EVENT_ACTIVE),
+        ).fetchone()
+        return row_to_dict(row)
+
+
+def next_submission_version(db_path: Path, team_id: int, round_id: int | None) -> int:
+    with closing(connect(db_path)) as connection:
+        row = connection.execute(
+            "SELECT COALESCE(MAX(version_number), 0) AS last_version FROM submissions WHERE team_id = ? AND round_id IS ?",
+            (team_id, round_id),
+        ).fetchone()
+        return int(row["last_version"] if row else 0) + 1
+
+
+def validate_round_upload(db_path: Path, team_id: int, round_row: dict[str, Any] | None) -> None:
+    if round_row is None:
+        raise GatewayStateError("No open round is available for uploads")
+    deadline = round_row.get("upload_deadline_at")
+    if deadline:
+        try:
+            parsed_deadline = datetime.fromisoformat(str(deadline))
+            if parsed_deadline.tzinfo is None:
+                parsed_deadline = parsed_deadline.replace(tzinfo=timezone.utc)
+            if parsed_deadline <= datetime.now(timezone.utc):
+                raise GatewayStateError("Round upload deadline has passed")
+        except ValueError as exc:
+            raise GatewayStateError("Round upload deadline is invalid") from exc
+    max_submissions = round_row.get("max_submissions_per_team")
+    if max_submissions:
+        with closing(connect(db_path)) as connection:
+            row = connection.execute(
+                "SELECT COUNT(*) AS count FROM submissions WHERE team_id = ? AND round_id = ?",
+                (team_id, int(round_row["id"])),
+            ).fetchone()
+            if int(row["count"] if row else 0) >= int(max_submissions):
+                raise GatewayStateError("Team has reached the submission limit for this round")
+
+
+def validate_round_dispatch(db_path: Path, submission_id: int) -> None:
+    submission = get_submission(db_path, submission_id)
+    if submission is None or not submission.get("round_id"):
+        return
+    with closing(connect(db_path)) as connection:
+        round_row = connection.execute("SELECT * FROM rounds WHERE id = ?", (submission["round_id"],)).fetchone()
+        if round_row is None or not round_row["max_dispatches_per_team"]:
+            return
+        count_row = connection.execute(
+            """
+            SELECT COUNT(*) AS count
+            FROM dispatches d
+            JOIN submissions s ON s.id = d.submission_id
+            WHERE s.team_id = ? AND s.round_id = ? AND d.status != ?
+            """,
+            (submission["team_id"], submission["round_id"], DISPATCH_CANCELLED),
+        ).fetchone()
+        if int(count_row["count"] if count_row else 0) >= int(round_row["max_dispatches_per_team"]):
+            raise GatewayStateError("Team has reached the dispatch limit for this round")
+
+
+def set_submission_candidate(db_path: Path, submission_id: int, is_candidate: bool) -> None:
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            "UPDATE submissions SET is_candidate = ?, updated_at = ? WHERE id = ?",
+            (1 if is_candidate else 0, utc_now(), submission_id),
+        )
+        if cursor.rowcount == 0:
+            raise GatewayStateError("Submission not found")
+        connection.commit()
 
 
 def create_team(
@@ -830,6 +1257,9 @@ def create_submission(db_path: Path, submission: NewSubmission) -> int:
     values: dict[str, Any] = {
         "user_id": submission.user_id,
         "team_id": submission.team_id,
+        "round_id": submission.round_id,
+        "version_number": submission.version_number,
+        "is_candidate": 1 if submission.is_candidate else 0,
         "username_snapshot": submission.username_snapshot,
         "display_name_snapshot": submission.display_name_snapshot,
         "team_name_snapshot": submission.team_name_snapshot,
@@ -862,15 +1292,49 @@ def create_submission(db_path: Path, submission: NewSubmission) -> int:
         return int(cursor.lastrowid)
 
 
-def list_submissions(db_path: Path, *, user_id: int | None = None) -> list[dict[str, Any]]:
-    sql = "SELECT * FROM submissions"
-    params: tuple[Any, ...] = ()
+def list_submissions(
+    db_path: Path,
+    *,
+    user_id: int | None = None,
+    team_id: int | None = None,
+    status: str | None = None,
+    round_id: int | None = None,
+    q: str = "",
+    limit: int | None = None,
+    offset: int = 0,
+) -> list[dict[str, Any]]:
+    sql = """
+        SELECT s.*, r.name AS round_name, e.name AS event_name
+        FROM submissions s
+        LEFT JOIN rounds r ON r.id = s.round_id
+        LEFT JOIN events e ON e.id = r.event_id
+    """
+    clauses: list[str] = []
+    params: list[Any] = []
     if user_id is not None:
-        sql += " WHERE user_id = ?"
-        params = (user_id,)
-    sql += " ORDER BY id DESC"
+        clauses.append("s.user_id = ?")
+        params.append(user_id)
+    if team_id is not None:
+        clauses.append("s.team_id = ?")
+        params.append(team_id)
+    if status:
+        clauses.append("s.status = ?")
+        params.append(status)
+    if round_id is not None:
+        clauses.append("s.round_id = ?")
+        params.append(round_id)
+    if q:
+        like = f"%{q.strip()}%"
+        clauses.append("(s.model_name LIKE ? OR s.team_name_snapshot LIKE ? OR s.username_snapshot LIKE ? OR s.display_name_snapshot LIKE ?)")
+        params.extend([like, like, like, like])
+    if clauses:
+        sql += " WHERE " + " AND ".join(clauses)
+    sql += " ORDER BY s.id DESC"
+    if limit is not None:
+        sql += " LIMIT ? OFFSET ?"
+        params.extend([limit, max(0, offset)])
     with closing(connect(db_path)) as connection:
-        rows = connection.execute(sql, params).fetchall()
+        rows = connection.execute(sql, tuple(params)).fetchall()
         return [_submission_row_to_dict(row) for row in rows]
 
 
@@ -950,6 +1414,7 @@ def create_vehicle(
     ssh_username: str = "",
     ssh_password: str | None = None,
     ssh_private_key_path: str = "",
+    ssh_host_key_sha256: str = "",
     ssh_remote_artifact_root: str = "/opt/aws/deepracer/artifacts",
     ssh_install_command_template: str = "",
     notes: str = "",
@@ -965,9 +1430,9 @@ def create_vehicle(
             INSERT INTO vehicles (
                 name, console_url, console_password_encrypted, delivery_mode, ssh_host,
                 ssh_port, ssh_username, ssh_password_encrypted, ssh_private_key_path,
-                ssh_remote_artifact_root, ssh_install_command_template, notes, created_at, updated_at
+                ssh_host_key_sha256, ssh_remote_artifact_root, ssh_install_command_template, notes, created_at, updated_at
             )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(name) DO UPDATE SET
                 console_url = excluded.console_url,
                 console_password_encrypted = excluded.console_password_encrypted,
@@ -977,6 +1442,7 @@ def create_vehicle(
                 ssh_username = excluded.ssh_username,
                 ssh_password_encrypted = excluded.ssh_password_encrypted,
                 ssh_private_key_path = excluded.ssh_private_key_path,
+                ssh_host_key_sha256 = excluded.ssh_host_key_sha256,
                 ssh_remote_artifact_root = excluded.ssh_remote_artifact_root,
                 ssh_install_command_template = excluded.ssh_install_command_template,
                 notes = excluded.notes,
@@ -992,6 +1458,7 @@ def create_vehicle(
                 ssh_username.strip(),
                 codec.encrypt(ssh_password),
                 ssh_private_key_path.strip(),
+                ssh_host_key_sha256.strip(),
                 ssh_remote_artifact_root.strip() or "/opt/aws/deepracer/artifacts",
                 ssh_install_command_template.strip(),
                 notes.strip(),
@@ -1022,6 +1489,7 @@ def update_vehicle(
     ssh_password: str | None = None,
     clear_ssh_password: bool = False,
     ssh_private_key_path: str = "",
+    ssh_host_key_sha256: str = "",
     ssh_remote_artifact_root: str = "/opt/aws/deepracer/artifacts",
     ssh_install_command_template: str = "",
     notes: str = "",
@@ -1057,6 +1525,7 @@ def update_vehicle(
                 ssh_username = ?,
                 ssh_password_encrypted = ?,
                 ssh_private_key_path = ?,
+                ssh_host_key_sha256 = ?,
                 ssh_remote_artifact_root = ?,
                 ssh_install_command_template = ?,
                 notes = ?,
@@ -1073,6 +1542,7 @@ def update_vehicle(
                 ssh_username.strip(),
                 ssh_secret,
                 ssh_private_key_path.strip(),
+                ssh_host_key_sha256.strip(),
                 ssh_remote_artifact_root.strip() or "/opt/aws/deepracer/artifacts",
                 ssh_install_command_template.strip(),
                 notes.strip(),
@@ -1093,6 +1563,44 @@ def get_vehicle(db_path: Path, vehicle_id: int) -> dict[str, Any] | None:
     with closing(connect(db_path)) as connection:
         row = connection.execute("SELECT * FROM vehicles WHERE id = ?", (vehicle_id,)).fetchone()
         return None if row is None else _vehicle_row_to_dict(row)
+
+
+def record_vehicle_health_check(
+    db_path: Path,
+    vehicle_id: int,
+    *,
+    console_status: str = "unknown",
+    ssh_status: str = "unknown",
+    rsync_status: str = "unknown",
+    disk_free_bytes: int | None = None,
+    message: str = "",
+) -> int:
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO vehicle_health_checks (vehicle_id, console_status, ssh_status, rsync_status, disk_free_bytes, message, created_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?)
+            """,
+            (vehicle_id, console_status, ssh_status, rsync_status, disk_free_bytes, message[:1000], utc_now()),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def list_latest_vehicle_health(db_path: Path) -> dict[int, dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute(
+            """
+            SELECT vh.*
+            FROM vehicle_health_checks vh
+            JOIN (
+                SELECT vehicle_id, MAX(id) AS latest_id
+                FROM vehicle_health_checks
+                GROUP BY vehicle_id
+            ) latest ON latest.latest_id = vh.id
+            """
+        ).fetchall()
+        return {int(row["vehicle_id"]): dict(row) for row in rows}
 
 
 def _vehicle_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
@@ -1155,6 +1663,75 @@ def create_dispatch_if_available(
         connection.close()
 
 
+def list_runnable_dispatches(db_path: Path, *, limit: int = 5) -> list[int]:
+    now = utc_now()
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute(
+            """
+            SELECT id
+            FROM dispatches
+            WHERE status = ? AND (next_retry_at IS NULL OR next_retry_at <= ?)
+            ORDER BY id
+            LIMIT ?
+            """,
+            (DISPATCH_QUEUED, now, limit),
+        ).fetchall()
+        return [int(row["id"]) for row in rows]
+
+
+def recover_interrupted_dispatches(db_path: Path) -> int:
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            UPDATE dispatches
+            SET status = ?, message = ?, finished_at = ?, updated_at = ?
+            WHERE status IN (?, ?, ?)
+            """,
+            (
+                DISPATCH_FAILED,
+                "Recovered after gateway restart; dispatch can be queued again by an admin",
+                utc_now(),
+                utc_now(),
+                DISPATCH_UPLOADING,
+                DISPATCH_VERIFYING,
+                DISPATCH_INSTALLING,
+            ),
+        )
+        connection.commit()
+        return int(cursor.rowcount)
+
+
+def schedule_dispatch_retry_or_fail(
+    db_path: Path,
+    dispatch_id: int,
+    submission_id: int,
+    message: str,
+    *,
+    max_retries: int,
+    retry_delay_seconds: int,
+) -> bool:
+    dispatch = get_dispatch(db_path, dispatch_id)
+    if dispatch is None:
+        return False
+    retry_count = int(dispatch.get("retry_count") or 0)
+    if retry_count < max(0, max_retries):
+        next_retry_at = (datetime.now(timezone.utc) + timedelta(seconds=max(1, retry_delay_seconds))).isoformat(timespec="seconds")
+        with closing(connect(db_path)) as connection:
+            connection.execute(
+                """
+                UPDATE dispatches
+                SET status = ?, message = ?, retry_count = retry_count + 1, next_retry_at = ?, updated_at = ?
+                WHERE id = ?
+                """,
+                (DISPATCH_QUEUED, f"Retry scheduled: {message}", next_retry_at, utc_now(), dispatch_id),
+            )
+            connection.commit()
+        return True
+    update_dispatch_status(db_path, dispatch_id, DISPATCH_FAILED, message)
+    update_submission_status(db_path, submission_id, SUBMISSION_FAILED, message)
+    return False
+
+
 def update_dispatch_status(db_path: Path, dispatch_id: int, status: str, message: str) -> None:
     now = utc_now()
     started_at = now if status == DISPATCH_UPLOADING else None
@@ -1180,7 +1757,7 @@ def update_dispatch_status(db_path: Path, dispatch_id: int, status: str, message
             )
         else:
             connection.execute(
-                "UPDATE dispatches SET status = ?, message = ?, updated_at = ? WHERE id = ?",
+                "UPDATE dispatches SET status = ?, message = ?, next_retry_at = NULL, updated_at = ? WHERE id = ?",
                 (status, message, now, dispatch_id),
             )
         connection.commit()
@@ -1228,22 +1805,35 @@ def list_dispatches(db_path: Path, limit: int = 25) -> list[dict[str, Any]]:
 def start_dispatch_attempt(db_path: Path, dispatch_id: int, mode: str, message: str) -> int:
     now = utc_now()
     with closing(connect(db_path)) as connection:
+        row = connection.execute("SELECT COUNT(*) AS count FROM dispatch_attempts WHERE dispatch_id = ?", (dispatch_id,)).fetchone()
+        attempt_number = int(row["count"] if row else 0) + 1
         cursor = connection.execute(
             """
-            INSERT INTO dispatch_attempts (dispatch_id, mode, status, message, started_at)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO dispatch_attempts (dispatch_id, mode, status, message, attempt_number, started_at)
+            VALUES (?, ?, ?, ?, ?, ?)
             """,
-            (dispatch_id, mode, DISPATCH_UPLOADING, message, now),
+            (dispatch_id, mode, DISPATCH_UPLOADING, message, attempt_number, now),
         )
         connection.commit()
         return int(cursor.lastrowid)
 
 
-def finish_dispatch_attempt(db_path: Path, attempt_id: int, status: str, message: str) -> None:
+def finish_dispatch_attempt(db_path: Path, attempt_id: int, status: str, message: str, *, error_type: str = "", next_retry_at: str | None = None) -> None:
     with closing(connect(db_path)) as connection:
+        row = connection.execute("SELECT started_at FROM dispatch_attempts WHERE id = ?", (attempt_id,)).fetchone()
+        duration = None
+        if row is not None:
+            try:
+                duration = (datetime.now(timezone.utc) - datetime.fromisoformat(str(row["started_at"]))).total_seconds()
+            except ValueError:
+                duration = None
         connection.execute(
-            "UPDATE dispatch_attempts SET status = ?, message = ?, finished_at = ? WHERE id = ?",
-            (status, message, utc_now(), attempt_id),
+            """
+            UPDATE dispatch_attempts
+            SET status = ?, message = ?, error_type = ?, duration_seconds = ?, next_retry_at = ?, finished_at = ?
+            WHERE id = ?
+            """,
+            (status, message, error_type, duration, next_retry_at, utc_now(), attempt_id),
         )
         connection.commit()
 
@@ -1280,6 +1870,7 @@ def get_dispatch_context(db_path: Path, dispatch_id: int, *, credential_secret: 
                 v.ssh_username,
                 v.ssh_password_encrypted,
                 v.ssh_private_key_path,
+                v.ssh_host_key_sha256,
                 v.ssh_remote_artifact_root,
                 v.ssh_install_command_template
             FROM dispatches d

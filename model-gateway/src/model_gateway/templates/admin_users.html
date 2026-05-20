@@ -5,6 +5,22 @@
   {% if generated %}
     <div class="notice">Generated credential: <code>{{ generated }}</code></div>
   {% endif %}
+  <form method="get" action="/admin/users" class="inline-form">
+    <input name="q" placeholder="Search users or teams" value="{{ filters.q }}">
+    <select name="role">
+      <option value="">Any role</option>
+      <option value="user" {% if filters.role == "user" %}selected{% endif %}>User</option>
+      <option value="admin" {% if filters.role == "admin" %}selected{% endif %}>Admin</option>
+    </select>
+    <select name="status">
+      <option value="">Any status</option>
+      <option value="active" {% if filters.status == "active" %}selected{% endif %}>Active</option>
+      <option value="pending" {% if filters.status == "pending" %}selected{% endif %}>Pending</option>
+      <option value="disabled" {% if filters.status == "disabled" %}selected{% endif %}>Disabled</option>
+    </select>
+    <button class="secondary" type="submit">Filter</button>
+    <a class="button-link secondary-link" href="/admin/export/users">Export users</a>
+  </form>
   <form method="post" action="/admin/users" class="inline-form">
     <input name="username" placeholder="username" required>
     <input name="display_name" placeholder="display name">

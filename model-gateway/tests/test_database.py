@@ -6,6 +6,7 @@ import pytest
 
 from model_gateway.database import (
     DISPATCH_FAILED,
+    DISPATCH_QUEUED,
     ROLE_ADMIN,
     ROLE_USER,
     SUBMISSION_APPROVED,
@@ -44,6 +45,16 @@ from model_gateway.database import (
     update_vehicle,
     update_dispatch_status,
     NewSubmission,
+    create_event,
+    create_round,
+    get_active_round,
+    list_audit_logs,
+    list_events,
+    list_rounds,
+    record_audit_log,
+    recover_interrupted_dispatches,
+    schedule_dispatch_retry_or_fail,
+    validate_round_upload,
 )
 
 
@@ -53,7 +64,7 @@ def _seed_user_team(db_path: Path) -> tuple[int, int]:
     return user_id, team_id
 
 
-def _submission(path: Path, user_id: int, team_id: int) -> NewSubmission:
+def _submission(path: Path, user_id: int, team_id: int, *, round_id: int | None = None) -> NewSubmission:
     return NewSubmission(
         user_id=user_id,
         team_id=team_id,
@@ -67,6 +78,7 @@ def _submission(path: Path, user_id: int, team_id: int) -> NewSubmission:
         storage_path=str(path),
         sha256="abc",
         size_bytes=123,
+        round_id=round_id,
     )
 
 
@@ -255,3 +267,42 @@ def test_team_join_code_and_member_editing(tmp_path: Path) -> None:
 
     remove_team_member(db_path, team_id, user_id)
     assert get_team(db_path, team_id)["member_count"] == 0
+
+
+def test_schema_default_round_audit_and_round_limits(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    assert list_events(db_path)[0]["name"] == "Default Event"
+    assert get_active_round(db_path)["name"] == "Practice Round"
+
+    record_audit_log(db_path, actor_user_id=None, actor_username="system", actor_role="system", action="test.action")
+    assert list_audit_logs(db_path)[0]["action"] == "test.action"
+
+    user_id = create_user(db_path, "racer", "Racer", "pw", role=ROLE_USER, status=USER_ACTIVE)
+    team_id = create_team(db_path, "Team", leader_user_id=user_id)
+    event_id = create_event(db_path, "Race")
+    round_id = create_round(db_path, event_id, "Limited", max_submissions_per_team=1)
+    round_row = [row for row in list_rounds(db_path) if row["id"] == round_id][0]
+    validate_round_upload(db_path, team_id, round_row)
+    create_submission(db_path, _submission(tmp_path / "model.tar.gz", user_id, team_id, round_id=round_id))
+    with pytest.raises(Exception, match="submission limit"):
+        validate_round_upload(db_path, team_id, round_row)
+
+
+def test_recover_and_schedule_dispatch_retry(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    user_id, team_id = _seed_user_team(db_path)
+    submission_id = create_submission(db_path, _submission(tmp_path / "model.tar.gz", user_id, team_id))
+    approve_submission(db_path, submission_id)
+    vehicle_id = create_vehicle(db_path, "Car 1", "http://car.local", None)
+    dispatch_id = create_dispatch_if_available(db_path, submission_id, vehicle_id)
+    update_dispatch_status(db_path, dispatch_id, "uploading", "uploading")
+    assert recover_interrupted_dispatches(db_path) == 1
+    assert get_dispatch(db_path, dispatch_id)["status"] == DISPATCH_FAILED
+
+    second_submission_id = create_submission(db_path, _submission(tmp_path / "model2.tar.gz", user_id, team_id))
+    approve_submission(db_path, second_submission_id)
+    second_dispatch_id = create_dispatch_if_available(db_path, second_submission_id, vehicle_id)
+    assert schedule_dispatch_retry_or_fail(db_path, second_dispatch_id, second_submission_id, "network", max_retries=1, retry_delay_seconds=1)
+    assert get_dispatch(db_path, second_dispatch_id)["status"] == DISPATCH_QUEUED

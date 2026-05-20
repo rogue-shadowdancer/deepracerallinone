@@ -2,6 +2,16 @@
 {% block content %}
 <section class="panel">
   <h1>Vehicles</h1>
+  <form method="get" action="/admin/vehicles" class="inline-form">
+    <input name="q" placeholder="Search vehicle, URL, SSH host" value="{{ filters.q }}">
+    <select name="mode">
+      <option value="">Any mode</option>
+      <option value="auto" {% if filters.mode == "auto" %}selected{% endif %}>Auto</option>
+      <option value="console_api" {% if filters.mode == "console_api" %}selected{% endif %}>Console API</option>
+      <option value="ssh" {% if filters.mode == "ssh" %}selected{% endif %}>SSH</option>
+    </select>
+    <button class="secondary" type="submit">Filter</button>
+  </form>
   <form method="post" action="/admin/vehicles" class="form-grid vehicle-form">
     <div class="grid-3">
       <label>Name <input name="name" required></label>
@@ -26,6 +36,7 @@
     </div>
     <div class="grid-2">
       <label>SSH private key path <input name="ssh_private_key_path"></label>
+      <label>SSH host key SHA256 <input name="ssh_host_key_sha256" placeholder="Optional SHA256 fingerprint"></label>
       <label>Remote artifact root <input name="ssh_remote_artifact_root" value="/opt/aws/deepracer/artifacts"></label>
     </div>
     <label>
@@ -39,7 +50,7 @@
 <section class="panel">
   <h2>Configured vehicles</h2>
   <table>
-    <thead><tr><th>Identity</th><th>Console</th><th>SSH</th><th>Install</th><th>Credentials</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Identity</th><th>Console</th><th>SSH</th><th>Install</th><th>Health</th><th>Credentials</th><th>Actions</th></tr></thead>
     <tbody>
       {% for vehicle in vehicles %}
         <tr>
@@ -71,10 +82,20 @@
           </td>
           <td>
             <label>Private key path <input form="vehicle-update-{{ vehicle.id }}" name="ssh_private_key_path" value="{{ vehicle.ssh_private_key_path }}"></label>
+            <label>Host key SHA256 <input form="vehicle-update-{{ vehicle.id }}" name="ssh_host_key_sha256" value="{{ vehicle.ssh_host_key_sha256 }}"></label>
             <label>Artifact root <input form="vehicle-update-{{ vehicle.id }}" name="ssh_remote_artifact_root" value="{{ vehicle.ssh_remote_artifact_root }}"></label>
             <label>Install command
               <textarea form="vehicle-update-{{ vehicle.id }}" name="ssh_install_command_template" rows="4">{{ vehicle.ssh_install_command_template }}</textarea>
             </label>
+          </td>
+          <td>
+            {% if vehicle.health %}
+              Console {{ vehicle.health.console_status }}<br>
+              SSH {{ vehicle.health.ssh_status }}<br>
+              <span class="muted">{{ vehicle.health.message }}</span>
+            {% else %}
+              <span class="muted">No preflight yet</span>
+            {% endif %}
           </td>
           <td>
             Console {{ "configured" if vehicle.has_console_password else "not set" }}<br>
@@ -86,10 +107,11 @@
             </form>
             <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-console"><button class="secondary" type="submit">Test Console</button></form>
             <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-ssh"><button class="secondary" type="submit">Test SSH</button></form>
+            <form method="post" action="/admin/vehicles/{{ vehicle.id }}/preflight"><button class="secondary" type="submit">Preflight</button></form>
           </td>
         </tr>
       {% else %}
-        <tr><td colspan="6" class="muted">No vehicles configured.</td></tr>
+        <tr><td colspan="7" class="muted">No vehicles configured.</td></tr>
       {% endfor %}
     </tbody>
   </table>

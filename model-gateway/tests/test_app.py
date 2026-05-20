@@ -4,6 +4,7 @@ from pathlib import Path
 
 from fastapi.testclient import TestClient
 
+from model_gateway.app import CSRF_COOKIE_NAME, create_app
 from model_gateway.config import Settings
 from model_gateway.database import (
     ROLE_USER,
@@ -15,6 +16,7 @@ from model_gateway.database import (
     get_vehicle,
     get_user_by_username,
     join_team,
+    list_audit_logs,
     list_submissions,
     list_vehicles,
     set_setting,
@@ -138,7 +140,7 @@ def test_admin_user_batch_and_registration_toggle(client: TestClient, settings: 
 
     register = client.post(
         "/register",
-        data={"username": "newbie", "display_name": "Newbie", "password": "pw"},
+        data={"username": "newbie", "display_name": "Newbie", "password": "newbie-password"},
         follow_redirects=False,
     )
     assert register.status_code == 303
@@ -271,3 +273,73 @@ def test_admin_team_member_routes(client: TestClient, settings: Settings) -> Non
     response = client.post(f"/admin/teams/{team_id}/members/{user_id}/remove", follow_redirects=False)
     assert response.status_code == 303
     assert get_team(settings.db_path, team_id)["member_count"] == 0
+
+
+def test_csrf_required_for_post(settings: Settings) -> None:
+    raw_client = TestClient(create_app(settings))
+
+    response = raw_client.post("/admin/login", data={"username": "admin", "password": "test-admin"}, follow_redirects=False)
+    assert response.status_code == 403
+
+    raw_client.get("/admin/login")
+    token = raw_client.cookies.get(CSRF_COOKIE_NAME)
+    response = raw_client.post(
+        "/admin/login",
+        data={"username": "admin", "password": "test-admin"},
+        headers={"x-csrf-token": token},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+
+
+def test_login_rate_limit_and_audit(client: TestClient, settings: Settings) -> None:
+    for _ in range(settings.login_rate_limit):
+        response = client.post("/admin/login", data={"username": "admin", "password": "wrong"}, follow_redirects=False)
+        assert response.status_code == 303
+
+    locked = client.post("/admin/login", data={"username": "admin", "password": "test-admin"}, follow_redirects=False)
+    assert "Too+many+failed" in locked.headers["location"]
+
+    user_id = create_user(settings.db_path, "otheradmin", "Other Admin", "pw", role="admin", status=USER_ACTIVE)
+    assert user_id
+    response = client.post("/admin/login", data={"username": "otheradmin", "password": "pw"}, follow_redirects=False)
+    assert response.status_code == 303
+    client.post("/admin/users", data={"username": "audituser", "display_name": "Audit User", "role": "user", "status": "active"})
+    actions = [row["action"] for row in list_audit_logs(settings.db_path)]
+    assert "admin.login" in actions
+    assert "user.create" in actions
+
+
+def test_events_rounds_exports_and_upload_binding(client: TestClient, settings: Settings, tmp_path: Path) -> None:
+    _seed_user_team(settings)
+    _login_admin(client)
+    event_response = client.post("/admin/events", data={"name": "Race Day", "status": "active"}, follow_redirects=False)
+    assert event_response.status_code == 303
+    round_response = client.post(
+        "/admin/rounds",
+        data={
+            "event_id": "2",
+            "name": "Round 1",
+            "status": "open",
+            "max_submissions_per_team": "2",
+            "max_dispatches_per_team": "1",
+        },
+        follow_redirects=False,
+    )
+    assert round_response.status_code == 303
+
+    _login_user(client)
+    archive = make_model_tar(tmp_path / "round-model.tar.gz")
+    with archive.open("rb") as model_file:
+        upload = client.post(
+            "/upload",
+            data={"model_name": "Round Model", "notes": ""},
+            files={"file": ("round-model.tar.gz", model_file, "application/gzip")},
+        )
+
+    assert upload.status_code == 200
+    submission = list_submissions(settings.db_path)[0]
+    assert submission["round_name"] == "Round 1"
+    assert submission["version_number"] == 1
+    export = client.get("/admin/export/submissions")
+    assert "Round 1" in export.text

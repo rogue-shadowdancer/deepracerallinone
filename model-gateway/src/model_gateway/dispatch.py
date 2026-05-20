@@ -17,6 +17,7 @@ from model_gateway.database import (
     SUBMISSION_INSTALLED,
     finish_dispatch_attempt,
     get_dispatch_context,
+    schedule_dispatch_retry_or_fail,
     start_dispatch_attempt,
     update_dispatch_status,
     update_submission_status,
@@ -60,10 +61,16 @@ def dispatch_model_to_vehicle(
             return
         except (VehicleClientError, SshDeliveryError, OSError, ValueError) as exc:
             last_error = str(exc)
-            finish_dispatch_attempt(settings.db_path, attempt_id, DISPATCH_FAILED, last_error)
+            finish_dispatch_attempt(settings.db_path, attempt_id, DISPATCH_FAILED, last_error, error_type=exc.__class__.__name__)
 
-    update_dispatch_status(settings.db_path, dispatch_id, DISPATCH_FAILED, last_error or "Dispatch failed")
-    update_submission_status(settings.db_path, submission_id, SUBMISSION_FAILED, last_error or "Dispatch failed")
+    schedule_dispatch_retry_or_fail(
+        settings.db_path,
+        dispatch_id,
+        submission_id,
+        last_error or "Dispatch failed",
+        max_retries=settings.dispatch_max_retries,
+        retry_delay_seconds=settings.dispatch_retry_delay_seconds,
+    )
 
 
 def _dispatch_modes(context: dict[str, object]) -> list[str]:
@@ -121,6 +128,7 @@ def _dispatch_with_ssh(
         username=str(context.get("ssh_username") or ""),
         password=context.get("ssh_password"),
         private_key_path=str(context.get("ssh_private_key_path") or ""),
+        host_key_sha256=str(context.get("ssh_host_key_sha256") or ""),
         remote_artifact_root=str(context.get("ssh_remote_artifact_root") or "/opt/aws/deepracer/artifacts"),
         install_command_template=str(context.get("ssh_install_command_template") or ""),
         timeout_seconds=settings.ssh_timeout_seconds,

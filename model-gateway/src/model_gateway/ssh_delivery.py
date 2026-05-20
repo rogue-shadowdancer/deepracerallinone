@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import os
 import posixpath
 import shutil
@@ -42,6 +43,7 @@ class SshDeliveryClient:
         username: str,
         password: str | None = None,
         private_key_path: str | None = None,
+        host_key_sha256: str = "",
         remote_artifact_root: str = "/opt/aws/deepracer/artifacts",
         install_command_template: str = "",
         timeout_seconds: int = 20,
@@ -55,6 +57,7 @@ class SshDeliveryClient:
         self.username = username
         self.password = password
         self.private_key_path = private_key_path or ""
+        self.host_key_sha256 = _normalize_fingerprint(host_key_sha256)
         self.remote_artifact_root = remote_artifact_root.rstrip("/") or "/opt/aws/deepracer/artifacts"
         self.install_command_template = install_command_template or DEFAULT_INSTALL_COMMAND_TEMPLATE
         self.timeout_seconds = timeout_seconds
@@ -167,6 +170,18 @@ class SshDeliveryClient:
     def _verify_installed(self, remote_model_dir: str) -> None:
         self._exec(f"test -s {_shell_quote(posixpath.join(remote_model_dir, 'checksum.txt'))}")
 
+    def preflight(self) -> dict[str, object]:
+        rsync_status = "available" if self._can_use_rsync() else "unavailable"
+        self._exec("true")
+        self._exec(f"mkdir -p {_shell_quote(self.remote_artifact_root)} && test -w {_shell_quote(self.remote_artifact_root)}")
+        disk_output = self._exec(f"df -Pk {_shell_quote(self.remote_artifact_root)} | tail -1 | awk '{{print $4}}'")
+        disk_free_bytes = None
+        try:
+            disk_free_bytes = int(disk_output.strip()) * 1024
+        except ValueError:
+            disk_free_bytes = None
+        return {"ssh_status": "reachable", "rsync_status": rsync_status, "disk_free_bytes": disk_free_bytes}
+
     def _exec(self, command: str) -> str:
         client = self._connect()
         try:
@@ -187,7 +202,8 @@ class SshDeliveryClient:
             raise SshDeliveryError("paramiko is required for SSH delivery") from exc
 
         client = paramiko.SSHClient()
-        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        client.load_system_host_keys()
+        client.set_missing_host_key_policy(_FingerprintPolicy(self.host_key_sha256))
         connect_kwargs: dict[str, object] = {
             "hostname": self.host,
             "port": self.port,
@@ -203,6 +219,11 @@ class SshDeliveryClient:
         client.connect(**connect_kwargs)
         transport = client.get_transport()
         if transport is not None:
+            if self.host_key_sha256:
+                remote_key = transport.get_remote_server_key()
+                if _key_sha256(remote_key) != self.host_key_sha256:
+                    client.close()
+                    raise SshDeliveryError("SSH host key fingerprint does not match configured value")
             transport.set_keepalive(10)
         return client
 
@@ -224,3 +245,27 @@ def _sha256_file(path: Path) -> str:
 
 def _shell_quote(value: str) -> str:
     return "'" + value.replace("'", "'\\''") + "'"
+
+
+def _normalize_fingerprint(value: str) -> str:
+    value = value.strip()
+    if value.startswith("SHA256:"):
+        value = value[len("SHA256:"):]
+    return value
+
+
+def _key_sha256(key) -> str:  # type: ignore[no-untyped-def]
+    return base64.b64encode(hashlib.sha256(key.asbytes()).digest()).decode("ascii").rstrip("=")
+
+
+class _FingerprintPolicy:
+    def __init__(self, expected_sha256: str = "") -> None:
+        self.expected_sha256 = expected_sha256
+
+    def missing_host_key(self, client, hostname, key) -> None:  # type: ignore[no-untyped-def]
+        actual = _key_sha256(key)
+        if self.expected_sha256 and actual != self.expected_sha256:
+            raise SshDeliveryError("SSH host key fingerprint does not match configured value")
+        if not self.expected_sha256:
+            # Accept for local competition LANs without persisting unknown host keys.
+            return
