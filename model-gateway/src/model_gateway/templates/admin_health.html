@@ -4,21 +4,27 @@
   <h1>Vehicle health</h1>
   <div id="health-live" class="muted">Live status enabled.</div>
   <table>
-    <thead><tr><th>Vehicle</th><th>Console</th><th>SSH</th><th>rsync</th><th>Disk</th><th>Message</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Group</th><th>Vehicle</th><th>Console</th><th>SSH</th><th>rsync</th><th>Disk</th><th>Last diagnostic</th><th>Message</th><th>Actions</th></tr></thead>
     <tbody>
       {% for vehicle in vehicles %}
         {% set health = vehicle.health %}
+        {% set diagnostic = vehicle.diagnostic %}
         <tr>
+          <td><span class="status">{{ vehicle.health_group }}</span></td>
           <td>{{ vehicle.name }}<br><span class="muted">{{ vehicle.delivery_mode }}</span></td>
           <td>{{ health.console_status if health else "unknown" }}</td>
           <td>{{ health.ssh_status if health else "unknown" }}</td>
           <td>{{ health.rsync_status if health else "unknown" }}</td>
           <td>{% if health and health.disk_free_bytes %}{{ (health.disk_free_bytes / 1073741824) | round(2) }} GB{% else %}-{% endif %}</td>
+          <td>{% if diagnostic %}{{ diagnostic.created_at }}<br><span class="muted">{{ diagnostic.overall_status }}</span>{% else %}-{% endif %}</td>
           <td>{{ health.message if health else "" }}</td>
-          <td><form method="post" action="/admin/vehicles/{{ vehicle.id }}/preflight"><button type="submit">Run preflight</button></form></td>
+          <td class="actions">
+            <form method="post" action="/admin/vehicles/{{ vehicle.id }}/diagnostics"><button type="submit">Run diagnostics</button></form>
+            <a class="button-link secondary-link" href="/admin/vehicles/{{ vehicle.id }}/diagnostics">Details</a>
+          </td>
         </tr>
       {% else %}
-        <tr><td colspan="7" class="muted">No vehicles configured.</td></tr>
+        <tr><td colspan="9" class="muted">No vehicles configured.</td></tr>
       {% endfor %}
     </tbody>
   </table>

@@ -18,7 +18,7 @@ class DispatchWorker:
     def start(self) -> None:
         if self.thread is not None and self.thread.is_alive():
             return
-        recover_interrupted_dispatches(self.settings.db_path)
+        recover_interrupted_dispatches(self.settings.db_path, stuck_seconds=self.settings.stuck_dispatch_seconds)
         self.thread = threading.Thread(target=self.run, name="deepracer-dispatch-worker", daemon=True)
         self.thread.start()
 

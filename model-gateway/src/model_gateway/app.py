@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import sqlite3
-import shutil
+import tarfile
 from contextlib import asynccontextmanager
 from pathlib import Path
+from urllib.parse import parse_qs
 from urllib.parse import urlencode
 
 from fastapi import FastAPI, File, Form, HTTPException, Request, UploadFile
@@ -47,6 +49,7 @@ from model_gateway.database import (
     default_team_max_members,
     disable_user,
     ensure_bootstrap_admin,
+    get_backup,
     get_dispatch,
     get_active_round,
     get_setting,
@@ -60,6 +63,9 @@ from model_gateway.database import (
     join_team_by_code,
     leave_team,
     list_audit_logs,
+    list_backups,
+    list_latest_vehicle_diagnostics,
+    list_vehicle_diagnostics,
     list_dispatch_attempts,
     list_dispatches,
     list_events,
@@ -74,11 +80,12 @@ from model_gateway.database import (
     move_user_to_team,
     next_submission_version,
     record_audit_log,
+    record_backup,
     record_login_attempt,
-    record_vehicle_health_check,
     regenerate_team_join_code,
     reject_submission,
     remove_team_member,
+    retry_dispatch,
     reset_user_password,
     revoke_session,
     revoke_session_by_id,
@@ -94,6 +101,9 @@ from model_gateway.database import (
     validate_round_dispatch,
     validate_round_upload,
 )
+from model_gateway.diagnostics import run_vehicle_diagnostics
+from model_gateway.maintenance import backup as create_backup_archive
+from model_gateway.maintenance import cleanup_preview
 from model_gateway.security import CredentialCodec, PasswordPolicyError, generate_password, new_csrf_token, validate_password_strength
 from model_gateway.ssh_delivery import SshDeliveryClient, SshDeliveryError
 from model_gateway.storage import UploadValidationError, save_upload
@@ -150,7 +160,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         token = request.cookies.get(CSRF_COOKIE_NAME) or new_csrf_token()
         request.state.csrf_token = token
         if request.method in {"POST", "PUT", "PATCH", "DELETE"}:
-            submitted = request.headers.get("x-csrf-token", "") or request.query_params.get("csrf_token", "")
+            submitted = request.headers.get("x-csrf-token", "") or await _csrf_from_body(request, token)
             if submitted != token:
                 return Response("Invalid CSRF token", status_code=403)
         response = await call_next(request)
@@ -198,6 +208,19 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             remote_addr=remote_addr(request),
         )
 
+    def maybe_auto_backup(actor: dict | None, reason: str) -> None:
+        if not settings.auto_backup_enabled:
+            return
+        archive_path = create_backup_archive(settings, settings.backup_dir)
+        record_backup(
+            settings.db_path,
+            path=str(archive_path),
+            size_bytes=archive_path.stat().st_size if archive_path.exists() else 0,
+            reason=reason,
+            actor_user_id=int(actor["id"]) if actor else None,
+            actor_username=str(actor.get("username", "")) if actor else "",
+        )
+
     def base_context(request: Request, **context: object) -> dict[str, object]:
         return {
             "request": request,
@@ -237,7 +260,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def user_login(request: Request, username: str = Form(...), password: str = Form(...)) -> Response:
         from model_gateway.database import authenticate_user
 
-        if login_locked(settings.db_path, username, role=ROLE_USER, limit=settings.login_rate_limit, lockout_seconds=settings.login_lockout_seconds):
+        if login_locked(
+            settings.db_path,
+            username,
+            role=ROLE_USER,
+            remote_addr=remote_addr(request),
+            limit=settings.login_rate_limit,
+            lockout_seconds=settings.login_lockout_seconds,
+        ):
+            audit(request, None, "auth.locked", "user", username, "user login rate limit")
             return redirect("/login", error="Too many failed login attempts. Try again later.")
         user = authenticate_user(settings.db_path, username, password, role=ROLE_USER)
         if user is None:
@@ -398,7 +429,15 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def admin_login(request: Request, username: str = Form(...), password: str = Form(...)) -> Response:
         from model_gateway.database import authenticate_user
 
-        if login_locked(settings.db_path, username, role=ROLE_ADMIN, limit=settings.login_rate_limit, lockout_seconds=settings.login_lockout_seconds):
+        if login_locked(
+            settings.db_path,
+            username,
+            role=ROLE_ADMIN,
+            remote_addr=remote_addr(request),
+            limit=settings.login_rate_limit,
+            lockout_seconds=settings.login_lockout_seconds,
+        ):
+            audit(request, None, "auth.locked", "user", username, "admin login rate limit")
             return redirect("/admin/login", error="Too many failed login attempts. Try again later.")
         admin = authenticate_user(settings.db_path, username, password, role=ROLE_ADMIN)
         if admin is None:
@@ -516,6 +555,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/admin/users/import")
     async def admin_import_users(request: Request, file: UploadFile = File(...)) -> Response:
         admin = require_admin(request)
+        maybe_auto_backup(admin, "before user CSV import")
         content = (await file.read()).decode("utf-8-sig")
         reader = csv.DictReader(io.StringIO(content))
         rows = [("username", "display_name", "team_name", "password")]
@@ -899,6 +939,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         admin = require_admin(request)
         try:
             validate_round_dispatch(settings.db_path, submission_id)
+            maybe_auto_backup(admin, "before dispatch queue")
             dispatch_id = create_dispatch_if_available(settings.db_path, submission_id, vehicle_id, requested_mode=requested_mode)
         except GatewayStateError as exc:
             return redirect("/admin", error=str(exc))
@@ -915,9 +956,38 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except GatewayStateError as exc:
             return redirect("/admin", error=str(exc))
 
+    @app.post("/admin/dispatches/{dispatch_id}/retry")
+    def retry_dispatch_route(request: Request, dispatch_id: int) -> Response:
+        admin = require_admin(request)
+        try:
+            retry_dispatch(settings.db_path, dispatch_id)
+            audit(request, admin, "dispatch.retry", "dispatch", dispatch_id)
+            return redirect("/admin", notice="Dispatch retry queued")
+        except GatewayStateError as exc:
+            return redirect("/admin", error=str(exc))
+
+    @app.get("/admin/dispatches/{dispatch_id}/timeline", response_class=HTMLResponse)
+    def dispatch_timeline(request: Request, dispatch_id: int) -> HTMLResponse:
+        require_admin(request)
+        dispatch_row = get_dispatch(settings.db_path, dispatch_id)
+        if dispatch_row is None:
+            raise HTTPException(status_code=404, detail="Dispatch not found")
+        return templates.TemplateResponse(
+            request,
+            "admin_dispatch_timeline.html",
+            base_context(
+                request,
+                dispatch=dispatch_row,
+                attempts=list_dispatch_attempts(settings.db_path, dispatch_id),
+                notice=request.query_params.get("notice"),
+                error=request.query_params.get("error"),
+            ),
+        )
+
     @app.post("/admin/submissions/batch")
     def batch_submissions(request: Request, action: str = Form(...), submission_ids: list = Form([]), reason: str = Form("")) -> Response:
         admin = require_admin(request)
+        maybe_auto_backup(admin, "before submission batch action")
         changed = 0
         for submission_id in submission_ids:
             try:
@@ -944,13 +1014,82 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             base_context(request, logs=list_audit_logs(settings.db_path), notice=request.query_params.get("notice"), error=request.query_params.get("error")),
         )
 
+    @app.get("/admin/backups", response_class=HTMLResponse)
+    def admin_backups(request: Request, cleanup_days: str = "") -> HTMLResponse:
+        require_admin(request)
+        cleanup = None
+        if cleanup_days:
+            try:
+                cleanup = cleanup_preview(settings, int(cleanup_days))
+            except ValueError as exc:
+                return templates.TemplateResponse(
+                    request,
+                    "admin_backups.html",
+                    base_context(request, backups=list_backups(settings.db_path), cleanup=None, error=str(exc)),
+                )
+        return templates.TemplateResponse(
+            request,
+            "admin_backups.html",
+            base_context(
+                request,
+                backups=list_backups(settings.db_path),
+                cleanup=cleanup,
+                data_dir=settings.data_dir,
+                notice=request.query_params.get("notice"),
+                error=request.query_params.get("error"),
+            ),
+        )
+
+    @app.post("/admin/backups")
+    def create_backup_route(request: Request, reason: str = Form("manual")) -> Response:
+        admin = require_admin(request)
+        try:
+            archive_path = create_backup_archive(settings, settings.backup_dir)
+            backup_id = record_backup(
+                settings.db_path,
+                path=str(archive_path),
+                size_bytes=archive_path.stat().st_size if archive_path.exists() else 0,
+                reason=reason.strip() or "manual",
+                actor_user_id=int(admin["id"]),
+                actor_username=str(admin["username"]),
+            )
+            audit(request, admin, "backup.create", "backup", backup_id, str(archive_path))
+            return redirect("/admin/backups", notice="Backup created")
+        except (OSError, ValueError, sqlite3.DatabaseError) as exc:
+            return redirect("/admin/backups", error=str(exc))
+
+    @app.get("/admin/backups/{backup_id}/download")
+    def download_backup(request: Request, backup_id: int) -> Response:
+        require_admin(request)
+        backup_row = get_backup(settings.db_path, backup_id)
+        if backup_row is None:
+            raise HTTPException(status_code=404, detail="Backup not found")
+        backup_path = Path(str(backup_row["path"]))
+        if not _safe_path_under(backup_path, settings.backup_dir) or not backup_path.is_file():
+            raise HTTPException(status_code=404, detail="Backup file not found")
+        return Response(
+            backup_path.read_bytes(),
+            media_type="application/gzip",
+            headers={"Content-Disposition": f'attachment; filename="{backup_path.name}"'},
+        )
+
+    @app.get("/admin/support-bundle")
+    def support_bundle(request: Request) -> Response:
+        admin = require_admin(request)
+        response = _support_bundle_response(settings)
+        audit(request, admin, "support_bundle.create", "support_bundle")
+        return response
+
     @app.get("/admin/health", response_class=HTMLResponse)
     def admin_health(request: Request) -> HTMLResponse:
         require_admin(request)
         vehicles = list_vehicles(settings.db_path)
         health = list_latest_vehicle_health(settings.db_path)
+        diagnostics = list_latest_vehicle_diagnostics(settings.db_path)
         for vehicle in vehicles:
             vehicle["health"] = health.get(int(vehicle["id"]))
+            vehicle["diagnostic"] = diagnostics.get(int(vehicle["id"]))
+            vehicle["health_group"] = _vehicle_health_group(vehicle.get("health"), vehicle.get("diagnostic"))
         return templates.TemplateResponse(
             request,
             "admin_health.html",
@@ -971,54 +1110,40 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/admin/vehicles/{vehicle_id}/preflight")
     def vehicle_preflight(request: Request, vehicle_id: int) -> Response:
         admin = require_admin(request)
+        try:
+            result = run_vehicle_diagnostics(settings, vehicle_id)
+        except ValueError:
+            return redirect("/admin/health", error="Vehicle not found")
+        audit(request, admin, "vehicle.diagnostics", "vehicle", vehicle_id, str(result["summary"]))
+        return redirect("/admin/health", notice="Vehicle diagnostics completed")
+
+    @app.get("/admin/vehicles/{vehicle_id}/diagnostics", response_class=HTMLResponse)
+    def vehicle_diagnostics_page(request: Request, vehicle_id: int) -> HTMLResponse:
+        require_admin(request)
         vehicle = get_vehicle(settings.db_path, vehicle_id)
         if vehicle is None:
-            return redirect("/admin/health", error="Vehicle not found")
-        codec = CredentialCodec(settings.credential_secret)
-        console_status = "skipped"
-        ssh_status = "skipped"
-        rsync_status = "unknown"
-        disk_free_bytes = None
-        messages: list[str] = []
-        if vehicle.get("console_url"):
-            try:
-                with VehicleClient(vehicle["console_url"], codec.decrypt(vehicle.get("console_password_encrypted")), timeout_seconds=settings.vehicle_timeout_seconds) as client:
-                    client.login()
-                    client.model_loading_status()
-                console_status = "reachable"
-            except (VehicleClientError, OSError) as exc:
-                console_status = "failed"
-                messages.append(f"console: {exc}")
-        if vehicle.get("ssh_host") and vehicle.get("ssh_username"):
-            try:
-                client = SshDeliveryClient(
-                    host=vehicle["ssh_host"],
-                    port=int(vehicle["ssh_port"]),
-                    username=vehicle["ssh_username"],
-                    password=codec.decrypt(vehicle.get("ssh_password_encrypted")),
-                    private_key_path=vehicle["ssh_private_key_path"],
-                    host_key_sha256=vehicle.get("ssh_host_key_sha256") or "",
-                    remote_artifact_root=vehicle["ssh_remote_artifact_root"],
-                    timeout_seconds=settings.ssh_timeout_seconds,
-                )
-                result = client.preflight()
-                ssh_status = str(result["ssh_status"])
-                rsync_status = str(result["rsync_status"])
-                disk_free_bytes = result.get("disk_free_bytes") if isinstance(result.get("disk_free_bytes"), int) else None
-            except SshDeliveryError as exc:
-                ssh_status = "failed"
-                messages.append(f"ssh: {exc}")
-        record_vehicle_health_check(
-            settings.db_path,
-            vehicle_id,
-            console_status=console_status,
-            ssh_status=ssh_status,
-            rsync_status=rsync_status,
-            disk_free_bytes=disk_free_bytes,
-            message="; ".join(messages) or "Preflight completed",
+            raise HTTPException(status_code=404, detail="Vehicle not found")
+        return templates.TemplateResponse(
+            request,
+            "admin_vehicle_diagnostics.html",
+            base_context(
+                request,
+                vehicle=vehicle,
+                diagnostics=list_vehicle_diagnostics(settings.db_path, vehicle_id),
+                notice=request.query_params.get("notice"),
+                error=request.query_params.get("error"),
+            ),
         )
-        audit(request, admin, "vehicle.preflight", "vehicle", vehicle_id, "; ".join(messages))
-        return redirect("/admin/health", notice="Vehicle preflight completed")
+
+    @app.post("/admin/vehicles/{vehicle_id}/diagnostics")
+    def run_vehicle_diagnostics_route(request: Request, vehicle_id: int) -> Response:
+        admin = require_admin(request)
+        try:
+            result = run_vehicle_diagnostics(settings, vehicle_id)
+            audit(request, admin, "vehicle.diagnostics", "vehicle", vehicle_id, str(result["summary"]))
+            return redirect(f"/admin/vehicles/{vehicle_id}/diagnostics", notice="Diagnostics completed")
+        except ValueError as exc:
+            return redirect("/admin/health", error=str(exc))
 
     @app.get("/admin/events", response_class=HTMLResponse)
     def admin_events(request: Request) -> HTMLResponse:
@@ -1044,6 +1169,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     def add_event(request: Request, name: str = Form(...), status: str = Form(EVENT_ACTIVE)) -> Response:
         admin = require_admin(request)
         try:
+            if status == EVENT_ACTIVE:
+                maybe_auto_backup(admin, "before active event create")
             event_id = create_event(settings.db_path, name, status=status)
             audit(request, admin, "event.create", "event", event_id, name)
             return redirect("/admin/events", notice="Event created")
@@ -1205,6 +1332,112 @@ def _csv_response(rows: list[tuple[object, ...]], filename: str) -> Response:
         media_type="text/csv",
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
+
+
+def _vehicle_health_group(health: object, diagnostic: object) -> str:
+    if isinstance(diagnostic, dict):
+        status = str(diagnostic.get("overall_status") or "")
+        if status == "ready":
+            return "ready"
+        if status == "error":
+            return "error"
+        if status == "warning":
+            return "warning"
+    if isinstance(health, dict):
+        statuses = {str(health.get("console_status") or ""), str(health.get("ssh_status") or "")}
+        if "failed" in statuses:
+            return "error"
+        if "warning" in statuses or "skipped" in statuses or "unknown" in statuses:
+            return "warning"
+        return "ready"
+    return "warning"
+
+
+def _safe_path_under(path: Path, root: Path) -> bool:
+    try:
+        path.resolve().relative_to(root.resolve())
+        return True
+    except ValueError:
+        return False
+
+
+def _support_bundle_response(settings: Settings) -> Response:
+    payload = io.BytesIO()
+    with tarfile.open(fileobj=payload, mode="w:gz") as archive:
+        _add_json_to_tar(archive, "settings.json", _sanitized_settings(settings))
+        _add_json_to_tar(archive, "audit_logs.json", list_audit_logs(settings.db_path, limit=max(1, settings.support_bundle_log_lines)))
+        _add_json_to_tar(archive, "dispatches.json", list_dispatches(settings.db_path, limit=200))
+        attempts: list[dict[str, object]] = []
+        for dispatch_row in list_dispatches(settings.db_path, limit=200):
+            attempts.extend(list_dispatch_attempts(settings.db_path, int(dispatch_row["id"])))
+        _add_json_to_tar(archive, "dispatch_attempts.json", attempts)
+        _add_json_to_tar(archive, "vehicle_health.json", list(list_latest_vehicle_health(settings.db_path).values()))
+        _add_json_to_tar(archive, "vehicle_diagnostics.json", list_vehicle_diagnostics(settings.db_path, limit=100))
+        _add_json_to_tar(archive, "backups.json", list_backups(settings.db_path))
+        _add_json_to_tar(archive, "vehicles_sanitized.json", [_sanitize_vehicle(vehicle) for vehicle in list_vehicles(settings.db_path)])
+    payload.seek(0)
+    return Response(
+        payload.getvalue(),
+        media_type="application/gzip",
+        headers={"Content-Disposition": 'attachment; filename="deepracer-gateway-support-bundle.tar.gz"'},
+    )
+
+
+def _add_json_to_tar(archive: tarfile.TarFile, name: str, value: object) -> None:
+    data = json.dumps(value, ensure_ascii=False, indent=2, default=str).encode("utf-8")
+    info = tarfile.TarInfo(name)
+    info.size = len(data)
+    archive.addfile(info, io.BytesIO(data))
+
+
+def _sanitized_settings(settings: Settings) -> dict[str, object]:
+    return {
+        "data_dir": str(settings.data_dir),
+        "upload_dir": str(settings.upload_dir),
+        "backup_dir": str(settings.backup_dir),
+        "competition_mode": settings.competition_mode,
+        "cookie_secure": settings.cookie_secure,
+        "allow_insecure_lan_cookie": settings.allow_insecure_lan_cookie,
+        "session_max_age_seconds": settings.session_max_age_seconds,
+        "login_rate_limit": settings.login_rate_limit,
+        "login_lockout_seconds": settings.login_lockout_seconds,
+        "max_upload_bytes": settings.max_upload_bytes,
+        "vehicle_timeout_seconds": settings.vehicle_timeout_seconds,
+        "install_timeout_seconds": settings.install_timeout_seconds,
+        "ssh_timeout_seconds": settings.ssh_timeout_seconds,
+        "dispatch_worker_enabled": settings.dispatch_worker_enabled,
+        "dispatch_worker_poll_seconds": settings.dispatch_worker_poll_seconds,
+        "dispatch_max_retries": settings.dispatch_max_retries,
+        "dispatch_retry_delay_seconds": settings.dispatch_retry_delay_seconds,
+        "stuck_dispatch_seconds": settings.stuck_dispatch_seconds,
+        "auto_backup_enabled": settings.auto_backup_enabled,
+        "support_bundle_log_lines": settings.support_bundle_log_lines,
+        "session_secret_set": bool(settings.session_secret),
+        "credential_secret_set": bool(settings.credential_secret),
+    }
+
+
+def _sanitize_vehicle(vehicle: dict[str, object]) -> dict[str, object]:
+    sanitized = dict(vehicle)
+    sanitized.pop("console_password_encrypted", None)
+    sanitized.pop("ssh_password_encrypted", None)
+    sanitized["console_password_present"] = bool(vehicle.get("has_console_password"))
+    sanitized["ssh_password_present"] = bool(vehicle.get("has_ssh_password"))
+    return sanitized
+
+
+async def _csrf_from_body(request: Request, expected_token: str) -> str:
+    content_type = request.headers.get("content-type", "")
+    if "application/x-www-form-urlencoded" not in content_type:
+        return ""
+    body = await request.body()
+
+    async def receive() -> dict[str, object]:
+        return {"type": "http.request", "body": body, "more_body": False}
+
+    request._receive = receive  # type: ignore[attr-defined]
+    parsed = parse_qs(body.decode("utf-8", errors="replace"))
+    return parsed.get("csrf_token", [""])[0]
 
 
 app = create_app()

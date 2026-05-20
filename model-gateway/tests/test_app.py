@@ -10,16 +10,23 @@ from model_gateway.database import (
     ROLE_USER,
     SETTING_REGISTRATION_ENABLED,
     USER_ACTIVE,
+    approve_submission,
+    create_dispatch_if_available,
     create_team,
     create_user,
+    create_vehicle,
     get_team,
+    get_dispatch,
     get_vehicle,
     get_user_by_username,
     join_team,
+    list_backups,
     list_audit_logs,
+    list_vehicle_diagnostics,
     list_submissions,
     list_vehicles,
     set_setting,
+    update_dispatch_status,
 )
 
 from conftest import make_model_tar
@@ -283,6 +290,12 @@ def test_csrf_required_for_post(settings: Settings) -> None:
 
     raw_client.get("/admin/login")
     token = raw_client.cookies.get(CSRF_COOKIE_NAME)
+    query_response = raw_client.post(
+        f"/admin/login?csrf_token={token}",
+        data={"username": "admin", "password": "test-admin"},
+        follow_redirects=False,
+    )
+    assert query_response.status_code == 403
     response = raw_client.post(
         "/admin/login",
         data={"username": "admin", "password": "test-admin"},
@@ -293,6 +306,9 @@ def test_csrf_required_for_post(settings: Settings) -> None:
 
 
 def test_login_rate_limit_and_audit(client: TestClient, settings: Settings) -> None:
+    _login_admin(client)
+    client.post("/admin/users", data={"username": "audituser", "display_name": "Audit User", "role": "user", "status": "active"})
+
     for _ in range(settings.login_rate_limit):
         response = client.post("/admin/login", data={"username": "admin", "password": "wrong"}, follow_redirects=False)
         assert response.status_code == 303
@@ -300,14 +316,10 @@ def test_login_rate_limit_and_audit(client: TestClient, settings: Settings) -> N
     locked = client.post("/admin/login", data={"username": "admin", "password": "test-admin"}, follow_redirects=False)
     assert "Too+many+failed" in locked.headers["location"]
 
-    user_id = create_user(settings.db_path, "otheradmin", "Other Admin", "pw", role="admin", status=USER_ACTIVE)
-    assert user_id
-    response = client.post("/admin/login", data={"username": "otheradmin", "password": "pw"}, follow_redirects=False)
-    assert response.status_code == 303
-    client.post("/admin/users", data={"username": "audituser", "display_name": "Audit User", "role": "user", "status": "active"})
     actions = [row["action"] for row in list_audit_logs(settings.db_path)]
     assert "admin.login" in actions
     assert "user.create" in actions
+    assert "auth.locked" in actions
 
 
 def test_events_rounds_exports_and_upload_binding(client: TestClient, settings: Settings, tmp_path: Path) -> None:
@@ -343,3 +355,76 @@ def test_events_rounds_exports_and_upload_binding(client: TestClient, settings: 
     assert submission["version_number"] == 1
     export = client.get("/admin/export/submissions")
     assert "Round 1" in export.text
+
+
+def test_admin_backup_and_support_bundle_routes(client: TestClient, settings: Settings) -> None:
+    _login_admin(client)
+
+    backup_response = client.post("/admin/backups", data={"reason": "test"}, follow_redirects=False)
+    assert backup_response.status_code == 303
+    backups = list_backups(settings.db_path)
+    assert len(backups) == 1
+
+    page = client.get("/admin/backups")
+    assert "Existing backups" in page.text
+    download = client.get(f"/admin/backups/{backups[0]['id']}/download")
+    assert download.status_code == 200
+    assert download.headers["content-type"] == "application/gzip"
+
+    bundle = client.get("/admin/support-bundle")
+    assert bundle.status_code == 200
+    assert bundle.headers["content-type"] == "application/gzip"
+    assert b"test-credential-secret" not in bundle.content
+
+
+def test_admin_dispatch_timeline_and_retry(client: TestClient, settings: Settings, tmp_path: Path) -> None:
+    user_id, team_id = _seed_user_team(settings)
+    archive = make_model_tar(tmp_path / "retry.tar.gz")
+    submission_id = list_submissions(settings.db_path)[0]["id"] if list_submissions(settings.db_path) else None
+    if submission_id is None:
+        from model_gateway.database import NewSubmission, create_submission
+
+        submission_id = create_submission(
+            settings.db_path,
+            NewSubmission(
+                user_id=user_id,
+                team_id=team_id,
+                username_snapshot="ada",
+                display_name_snapshot="Ada",
+                team_name_snapshot="Team A",
+                team_members_snapshot="[]",
+                model_name="Retry Model",
+                notes="",
+                original_filename="retry.tar.gz",
+                storage_path=str(archive),
+                sha256="abc",
+                size_bytes=archive.stat().st_size,
+            ),
+        )
+    approve_submission(settings.db_path, int(submission_id))
+    vehicle_id = create_vehicle(settings.db_path, "Retry Car", "http://car.local", None)
+    dispatch_id = create_dispatch_if_available(settings.db_path, int(submission_id), vehicle_id)
+    update_dispatch_status(settings.db_path, dispatch_id, "failed", "network")
+
+    _login_admin(client)
+    timeline = client.get(f"/admin/dispatches/{dispatch_id}/timeline")
+    assert timeline.status_code == 200
+    assert "Retry dispatch" in timeline.text
+
+    retry_response = client.post(f"/admin/dispatches/{dispatch_id}/retry", follow_redirects=False)
+    assert retry_response.status_code == 303
+    assert get_dispatch(settings.db_path, dispatch_id)["status"] == "queued"
+
+
+def test_admin_vehicle_diagnostics_route_records_result(client: TestClient, settings: Settings) -> None:
+    _login_admin(client)
+    vehicle_id = create_vehicle(settings.db_path, "Diag Car", "", None)
+
+    response = client.post(f"/admin/vehicles/{vehicle_id}/diagnostics", follow_redirects=False)
+
+    assert response.status_code == 303
+    diagnostics = list_vehicle_diagnostics(settings.db_path, vehicle_id)
+    assert diagnostics
+    assert diagnostics[0]["overall_status"] == "warning"
+    page = client.get(f"/admin/vehicles/{vehicle_id}/diagnostics")
+    assert "Vehicle diagnostics" in page.text

@@ -40,9 +40,32 @@
     warning.hidden = ok;
     warning.textContent = ok ? "" : "Model file name must end with .tar.gz";
   });
-  uploadForm?.addEventListener("submit", () => {
+  uploadForm?.addEventListener("submit", (event) => {
+    event.preventDefault();
+    const token = document.querySelector('meta[name="csrf-token"]')?.content || "";
+    const request = new XMLHttpRequest();
+    request.open("POST", uploadForm.action);
+    request.setRequestHeader("X-CSRF-Token", token);
+    request.upload.addEventListener("progress", (progressEvent) => {
+      progress.hidden = false;
+      if (progressEvent.lengthComputable) {
+        progress.value = Math.round((progressEvent.loaded / progressEvent.total) * 100);
+      } else {
+        progress.removeAttribute("value");
+      }
+    });
+    request.addEventListener("load", () => {
+      document.open();
+      document.write(request.responseText);
+      document.close();
+    });
+    request.addEventListener("error", () => {
+      warning.hidden = false;
+      warning.textContent = "Upload failed before the server returned a response.";
+    });
     progress.hidden = false;
     progress.removeAttribute("value");
+    request.send(new FormData(uploadForm));
   });
 </script>
 {% endblock %}

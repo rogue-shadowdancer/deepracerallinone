@@ -52,8 +52,16 @@ from model_gateway.database import (
     list_events,
     list_rounds,
     record_audit_log,
+    record_backup,
+    record_login_attempt,
+    record_vehicle_diagnostic,
     recover_interrupted_dispatches,
+    retry_dispatch,
     schedule_dispatch_retry_or_fail,
+    get_backup,
+    list_backups,
+    list_vehicle_diagnostics,
+    login_locked,
     validate_round_upload,
 )
 
@@ -306,3 +314,51 @@ def test_recover_and_schedule_dispatch_retry(tmp_path: Path) -> None:
     second_dispatch_id = create_dispatch_if_available(db_path, second_submission_id, vehicle_id)
     assert schedule_dispatch_retry_or_fail(db_path, second_dispatch_id, second_submission_id, "network", max_retries=1, retry_delay_seconds=1)
     assert get_dispatch(db_path, second_dispatch_id)["status"] == DISPATCH_QUEUED
+
+
+def test_retry_dispatch_only_failed_or_cancelled(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    user_id, team_id = _seed_user_team(db_path)
+    submission_id = create_submission(db_path, _submission(tmp_path / "model.tar.gz", user_id, team_id))
+    approve_submission(db_path, submission_id)
+    vehicle_id = create_vehicle(db_path, "Car 1", "http://car.local", None)
+    dispatch_id = create_dispatch_if_available(db_path, submission_id, vehicle_id)
+
+    with pytest.raises(Exception, match="failed or cancelled"):
+        retry_dispatch(db_path, dispatch_id)
+
+    update_dispatch_status(db_path, dispatch_id, DISPATCH_FAILED, "network")
+    retry_dispatch(db_path, dispatch_id)
+    assert get_dispatch(db_path, dispatch_id)["status"] == DISPATCH_QUEUED
+
+
+def test_login_locked_checks_username_and_remote_addr(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    record_login_attempt(db_path, "racer", role=ROLE_USER, remote_addr="10.0.0.1", succeeded=False)
+    record_login_attempt(db_path, "other", role=ROLE_USER, remote_addr="10.0.0.1", succeeded=False)
+
+    assert login_locked(db_path, "racer", role=ROLE_USER, remote_addr="10.0.0.2", limit=1, lockout_seconds=60)
+    assert login_locked(db_path, "third", role=ROLE_USER, remote_addr="10.0.0.1", limit=2, lockout_seconds=60)
+
+
+def test_vehicle_diagnostics_and_backup_records(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    vehicle_id = create_vehicle(db_path, "Diag Car", "", None)
+    diagnostic_id = record_vehicle_diagnostic(
+        db_path,
+        vehicle_id,
+        overall_status="warning",
+        summary="ssh not configured",
+        steps=[{"name": "ssh_config", "status": "warning"}],
+        snapshot={"ssh_configured": False},
+    )
+    diagnostics = list_vehicle_diagnostics(db_path, vehicle_id)
+    assert diagnostics[0]["id"] == diagnostic_id
+    assert diagnostics[0]["steps"][0]["name"] == "ssh_config"
+
+    backup_id = record_backup(db_path, path=str(tmp_path / "backup.tar.gz"), size_bytes=123, reason="test", actor_username="admin")
+    assert get_backup(db_path, backup_id)["size_bytes"] == 123
+    assert list_backups(db_path)[0]["reason"] == "test"

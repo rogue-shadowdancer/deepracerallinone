@@ -171,16 +171,97 @@ class SshDeliveryClient:
         self._exec(f"test -s {_shell_quote(posixpath.join(remote_model_dir, 'checksum.txt'))}")
 
     def preflight(self) -> dict[str, object]:
-        rsync_status = "available" if self._can_use_rsync() else "unavailable"
-        self._exec("true")
-        self._exec(f"mkdir -p {_shell_quote(self.remote_artifact_root)} && test -w {_shell_quote(self.remote_artifact_root)}")
-        disk_output = self._exec(f"df -Pk {_shell_quote(self.remote_artifact_root)} | tail -1 | awk '{{print $4}}'")
-        disk_free_bytes = None
-        try:
-            disk_free_bytes = int(disk_output.strip()) * 1024
-        except ValueError:
+        diagnostics = self.diagnostics()
+        failed = [step for step in diagnostics["steps"] if step["status"] == "error"]
+        if failed:
+            raise SshDeliveryError("; ".join(str(step["message"]) for step in failed))
+        rsync_status = "available" if diagnostics["snapshot"].get("rsync_available") else "unavailable"
+        disk_free_bytes = diagnostics["snapshot"].get("disk_free_bytes")
+        if not isinstance(disk_free_bytes, int):
             disk_free_bytes = None
         return {"ssh_status": "reachable", "rsync_status": rsync_status, "disk_free_bytes": disk_free_bytes}
+
+    def diagnostics(self) -> dict[str, object]:
+        steps: list[dict[str, object]] = []
+        snapshot: dict[str, object] = {
+            "host_key_configured": bool(self.host_key_sha256),
+            "rsync_available": bool(self._can_use_rsync()),
+            "remote_artifact_root": self.remote_artifact_root,
+        }
+
+        def run_step(name: str, command: str, suggestion: str = "") -> str:
+            started = time.monotonic()
+            try:
+                output = self._exec(command)
+                steps.append(
+                    {
+                        "name": name,
+                        "status": "ready",
+                        "message": "ok",
+                        "duration_seconds": round(time.monotonic() - started, 3),
+                        "output": output.strip()[:1000],
+                        "suggestion": "",
+                    }
+                )
+                return output
+            except Exception as exc:  # noqa: BLE001 - diagnostics should capture exact field failures.
+                steps.append(
+                    {
+                        "name": name,
+                        "status": "error",
+                        "message": str(exc),
+                        "duration_seconds": round(time.monotonic() - started, 3),
+                        "output": "",
+                        "suggestion": suggestion,
+                    }
+                )
+                return ""
+
+        run_step("ssh_connect", "true", "Check SSH host, port, username, password/key, and host key fingerprint.")
+        run_step(
+            "remote_artifact_root_writable",
+            f"mkdir -p {_shell_quote(self.remote_artifact_root)} && test -w {_shell_quote(self.remote_artifact_root)}",
+            "Grant the SSH user write access to the DeepRacer artifact root or choose a writable root.",
+        )
+        disk_output = run_step(
+            "remote_disk_space",
+            f"df -Pk {_shell_quote(self.remote_artifact_root)} | tail -1 | awk '{{print $4}}'",
+            "Free space on the vehicle before dispatching large physical model archives.",
+        )
+        try:
+            snapshot["disk_free_bytes"] = int(disk_output.strip()) * 1024
+        except ValueError:
+            snapshot["disk_free_bytes"] = None
+        if snapshot["rsync_available"]:
+            steps.append(
+                {
+                    "name": "rsync_local",
+                    "status": "ready",
+                    "message": "local rsync and SSH private key are configured",
+                    "duration_seconds": 0,
+                    "output": "",
+                    "suggestion": "",
+                }
+            )
+        else:
+            steps.append(
+                {
+                    "name": "rsync_local",
+                    "status": "warning",
+                    "message": "rsync acceleration unavailable; SFTP resume fallback will be used",
+                    "duration_seconds": 0,
+                    "output": "",
+                    "suggestion": "Install rsync locally and use SSH key auth if faster transfer is needed.",
+                }
+            )
+        run_step(
+            "model_loader_service",
+            "bash -lc 'source /opt/ros/foxy/setup.bash >/dev/null 2>&1; "
+            "if [ -f /opt/aws/deepracer/setup.bash ]; then source /opt/aws/deepracer/setup.bash >/dev/null 2>&1; fi; "
+            "ros2 service list 2>/dev/null | grep -q /deepracer_systems_pkg/console_model_action'",
+            "Confirm ROS2 Foxy and the DeepRacer model loader service are running on the vehicle.",
+        )
+        return {"steps": steps, "snapshot": snapshot}
 
     def _exec(self, command: str) -> str:
         client = self._connect()

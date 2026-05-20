@@ -13,6 +13,17 @@ from model_gateway.database import (
     DISPATCH_MODE_SSH,
     DISPATCH_UPLOADING,
     DISPATCH_VERIFYING,
+    ERROR_CHECKSUM_MISMATCH,
+    ERROR_CONSOLE_INSTALL_TIMEOUT,
+    ERROR_CONSOLE_LOGIN,
+    ERROR_CONSOLE_RESPONSE,
+    ERROR_CONSOLE_UPLOAD,
+    ERROR_NETWORK,
+    ERROR_SSH_AUTH,
+    ERROR_SSH_HOST_KEY,
+    ERROR_SSH_INSTALL_COMMAND,
+    ERROR_SSH_REMOTE_SPACE,
+    ERROR_UNKNOWN,
     SUBMISSION_FAILED,
     SUBMISSION_INSTALLED,
     finish_dispatch_attempt,
@@ -61,7 +72,7 @@ def dispatch_model_to_vehicle(
             return
         except (VehicleClientError, SshDeliveryError, OSError, ValueError) as exc:
             last_error = str(exc)
-            finish_dispatch_attempt(settings.db_path, attempt_id, DISPATCH_FAILED, last_error, error_type=exc.__class__.__name__)
+            finish_dispatch_attempt(settings.db_path, attempt_id, DISPATCH_FAILED, last_error, error_type=_classify_dispatch_error(exc))
 
     schedule_dispatch_retry_or_fail(
         settings.db_path,
@@ -137,3 +148,32 @@ def _dispatch_with_ssh(
     )
     result = client.install_model(model_path, str(context["original_filename"]))
     update_dispatch_status(settings.db_path, dispatch_id, DISPATCH_VERIFYING, result.upload_message)
+
+
+def _classify_dispatch_error(exc: Exception) -> str:
+    message = str(exc).lower()
+    if isinstance(exc, VehicleClientError):
+        if "login" in message:
+            return ERROR_CONSOLE_LOGIN
+        if "upload" in message or "rejected" in message:
+            return ERROR_CONSOLE_UPLOAD
+        if "timed out" in message or "timeout" in message:
+            return ERROR_CONSOLE_INSTALL_TIMEOUT
+        if "json" in message or "response" in message:
+            return ERROR_CONSOLE_RESPONSE
+        return ERROR_NETWORK
+    if isinstance(exc, SshDeliveryError):
+        if "authentication" in message or "auth" in message or "permission denied" in message:
+            return ERROR_SSH_AUTH
+        if "host key" in message or "fingerprint" in message:
+            return ERROR_SSH_HOST_KEY
+        if "no space" in message or "disk" in message or "space" in message:
+            return ERROR_SSH_REMOTE_SPACE
+        if "sha256" in message or "checksum" in message:
+            return ERROR_CHECKSUM_MISMATCH
+        if "install" in message or "console_model_action" in message or "model loader" in message:
+            return ERROR_SSH_INSTALL_COMMAND
+        return ERROR_NETWORK
+    if isinstance(exc, OSError):
+        return ERROR_NETWORK
+    return ERROR_UNKNOWN

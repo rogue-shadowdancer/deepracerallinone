@@ -94,7 +94,7 @@
               SSH {{ vehicle.health.ssh_status }}<br>
               <span class="muted">{{ vehicle.health.message }}</span>
             {% else %}
-              <span class="muted">No preflight yet</span>
+              <span class="muted">No diagnostics yet</span>
             {% endif %}
           </td>
           <td>
@@ -107,7 +107,8 @@
             </form>
             <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-console"><button class="secondary" type="submit">Test Console</button></form>
             <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-ssh"><button class="secondary" type="submit">Test SSH</button></form>
-            <form method="post" action="/admin/vehicles/{{ vehicle.id }}/preflight"><button class="secondary" type="submit">Preflight</button></form>
+            <form method="post" action="/admin/vehicles/{{ vehicle.id }}/diagnostics"><button class="secondary" type="submit">Diagnostics</button></form>
+            <a class="button-link secondary-link" href="/admin/vehicles/{{ vehicle.id }}/diagnostics">Diagnostic details</a>
           </td>
         </tr>
       {% else %}

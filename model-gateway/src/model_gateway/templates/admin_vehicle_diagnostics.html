@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Vehicle diagnostics: {{ vehicle.name }}</h1>
+  <form method="post" action="/admin/vehicles/{{ vehicle.id }}/diagnostics" class="inline-form">
+    <button type="submit">Run diagnostics</button>
+    <a class="button-link secondary-link" href="/admin/health">Back to health</a>
+  </form>
+</section>
+
+{% for diagnostic in diagnostics %}
+  <section class="panel">
+    <h2>#{{ diagnostic.id }} 路 {{ diagnostic.overall_status }}</h2>
+    <p class="muted">{{ diagnostic.created_at }} 路 {{ diagnostic.summary }}</p>
+    <table>
+      <thead><tr><th>Step</th><th>Status</th><th>Duration</th><th>Message</th><th>Suggestion</th></tr></thead>
+      <tbody>
+        {% for step in diagnostic.steps %}
+          <tr>
+            <td>{{ step.name }}</td>
+            <td><span class="status">{{ step.status }}</span></td>
+            <td>{{ step.duration_seconds }}s</td>
+            <td>
+              {{ step.message }}
+              {% if step.output %}<br><code>{{ step.output }}</code>{% endif %}
+            </td>
+            <td>{{ step.suggestion }}</td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    <details>
+      <summary>Compatibility snapshot</summary>
+      <pre>{{ diagnostic.snapshot | tojson(indent=2) }}</pre>
+    </details>
+  </section>
+{% else %}
+  <section class="panel"><p class="muted">No diagnostics have been run for this vehicle.</p></section>
+{% endfor %}
+{% endblock %}

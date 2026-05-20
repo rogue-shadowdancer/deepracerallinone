@@ -1,0 +1,58 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Backups</h1>
+  <form method="post" action="/admin/backups" class="inline-form">
+    <input name="reason" placeholder="Reason" value="manual">
+    <button type="submit">Create backup</button>
+  </form>
+  <form method="get" action="/admin/backups" class="inline-form">
+    <input name="cleanup_days" type="number" min="0" placeholder="Failed uploads older than days">
+    <button class="secondary" type="submit">Preview cleanup</button>
+  </form>
+  <p class="muted">Data directory: {{ data_dir }}</p>
+</section>
+
+{% if cleanup %}
+  <section class="panel">
+    <h2>Cleanup preview</h2>
+    <p>{{ cleanup.count }} failed upload(s), {{ (cleanup.total_bytes / 1048576) | round(1) }} MB reclaimable.</p>
+    <table>
+      <thead><tr><th>ID</th><th>Model</th><th>Size</th><th>Created</th><th>Path</th></tr></thead>
+      <tbody>
+        {% for item in cleanup.get("items", []) %}
+          <tr>
+            <td>#{{ item.id }}</td>
+            <td>{{ item.model_name }}</td>
+            <td>{{ (item.size_bytes / 1048576) | round(1) }} MB</td>
+            <td>{{ item.created_at }}</td>
+            <td><code>{{ item.storage_path }}</code></td>
+          </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+{% endif %}
+
+<section class="panel">
+  <h2>Existing backups</h2>
+  <table>
+    <thead><tr><th>ID</th><th>Reason</th><th>Size</th><th>Actor</th><th>Created</th><th>Path</th><th></th></tr></thead>
+    <tbody>
+      {% for backup in backups %}
+        <tr>
+          <td>#{{ backup.id }}</td>
+          <td>{{ backup.reason }}</td>
+          <td>{{ (backup.size_bytes / 1048576) | round(1) }} MB</td>
+          <td>{{ backup.actor_username }}</td>
+          <td>{{ backup.created_at }}</td>
+          <td><code>{{ backup.path }}</code></td>
+          <td><a class="button-link secondary-link" href="/admin/backups/{{ backup.id }}/download">Download</a></td>
+        </tr>
+      {% else %}
+        <tr><td colspan="7" class="muted">No backups yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

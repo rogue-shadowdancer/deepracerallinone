@@ -113,7 +113,11 @@
           <td><span class="status">{{ dispatch.status }}</span></td>
           <td>{{ dispatch.message }}</td>
           <td>{{ dispatch.updated_at }}</td>
-          <td>
+          <td class="actions">
+            <a class="button-link secondary-link" href="/admin/dispatches/{{ dispatch.id }}/timeline">Details</a>
+            {% if dispatch.status in ["failed", "cancelled"] %}
+              <form method="post" action="/admin/dispatches/{{ dispatch.id }}/retry"><button class="secondary" type="submit">Retry</button></form>
+            {% endif %}
             {% if dispatch.status == "queued" %}
               <form method="post" action="/admin/dispatches/{{ dispatch.id }}/cancel"><button class="secondary" type="submit">Cancel</button></form>
             {% endif %}

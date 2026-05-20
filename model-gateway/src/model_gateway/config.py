@@ -33,6 +33,7 @@ class Settings:
     credential_secret: str = field(default_factory=lambda: os.getenv("GATEWAY_CREDENTIAL_SECRET", ""))
     competition_mode: bool = field(default_factory=lambda: _bool_env("GATEWAY_COMPETITION_MODE", False))
     cookie_secure: bool = field(default_factory=lambda: _bool_env("GATEWAY_COOKIE_SECURE", False))
+    allow_insecure_lan_cookie: bool = field(default_factory=lambda: _bool_env("GATEWAY_ALLOW_INSECURE_LAN_COOKIE", False))
     session_max_age_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_SESSION_MAX_AGE_SECONDS", 8 * 60 * 60))
     login_rate_limit: int = field(default_factory=lambda: _int_env("GATEWAY_LOGIN_RATE_LIMIT", 5))
     login_lockout_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_LOGIN_LOCKOUT_SECONDS", 10 * 60))
@@ -47,6 +48,9 @@ class Settings:
     dispatch_worker_poll_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_DISPATCH_WORKER_POLL_SECONDS", 2))
     dispatch_max_retries: int = field(default_factory=lambda: _int_env("GATEWAY_DISPATCH_MAX_RETRIES", 1))
     dispatch_retry_delay_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_DISPATCH_RETRY_DELAY_SECONDS", 30))
+    stuck_dispatch_seconds: int = field(default_factory=lambda: _int_env("GATEWAY_STUCK_DISPATCH_SECONDS", 15 * 60))
+    auto_backup_enabled: bool = field(default_factory=lambda: _bool_env("GATEWAY_AUTO_BACKUP_ENABLED", True))
+    support_bundle_log_lines: int = field(default_factory=lambda: _int_env("GATEWAY_SUPPORT_BUNDLE_LOG_LINES", 200))
 
     @property
     def db_path(self) -> Path:
@@ -56,9 +60,14 @@ class Settings:
     def upload_dir(self) -> Path:
         return self.data_dir / "uploads"
 
+    @property
+    def backup_dir(self) -> Path:
+        return self.data_dir / "backups"
+
     def ensure_directories(self) -> None:
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.upload_dir.mkdir(parents=True, exist_ok=True)
+        self.backup_dir.mkdir(parents=True, exist_ok=True)
 
     def validate_runtime(self) -> None:
         if self.session_max_age_seconds <= 0:
@@ -73,3 +82,8 @@ class Settings:
             raise ValueError("Competition mode requires a non-default GATEWAY_SESSION_SECRET")
         if not self.credential_secret:
             raise ValueError("Competition mode requires GATEWAY_CREDENTIAL_SECRET")
+        if not self.cookie_secure and not self.allow_insecure_lan_cookie:
+            raise ValueError(
+                "Competition mode requires GATEWAY_COOKIE_SECURE=true or explicit "
+                "GATEWAY_ALLOW_INSECURE_LAN_COOKIE=true for HTTP-only LAN deployments"
+            )

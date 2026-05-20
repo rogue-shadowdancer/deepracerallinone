@@ -23,7 +23,9 @@
         <a href="/admin/vehicles">Vehicles</a>
         <a href="/admin/events">Events</a>
         <a href="/admin/health">Health</a>
+        <a href="/admin/backups">Backups</a>
         <a href="/admin/audit">Audit</a>
+        <a href="/admin/support-bundle">Support Bundle</a>
         <form method="post" action="/admin/logout"><button class="link-button" type="submit">Logout</button></form>
       {% else %}
         <a href="/login">User Login</a>
@@ -54,9 +56,6 @@
         input.value = csrfToken;
         form.prepend(input);
       }
-      const action = new URL(form.getAttribute("action") || window.location.href, window.location.href);
-      action.searchParams.set("csrf_token", csrfToken);
-      form.setAttribute("action", action.pathname + action.search);
     });
   </script>
 </body>

@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block content %}
+<section class="panel">
+  <h1>Dispatch #{{ dispatch.id }} timeline</h1>
+  <p class="muted">Status {{ dispatch.status }} 路 {{ dispatch.message }}</p>
+  <div class="actions">
+    {% if dispatch.status in ["failed", "cancelled"] %}
+      <form method="post" action="/admin/dispatches/{{ dispatch.id }}/retry"><button type="submit">Retry dispatch</button></form>
+    {% endif %}
+    {% if dispatch.status == "queued" %}
+      <form method="post" action="/admin/dispatches/{{ dispatch.id }}/cancel"><button class="secondary" type="submit">Cancel queued</button></form>
+    {% endif %}
+    <a class="button-link secondary-link" href="/admin">Back to queue</a>
+  </div>
+</section>
+
+<section class="panel">
+  <h2>Attempts</h2>
+  <table>
+    <thead><tr><th>#</th><th>Mode</th><th>Status</th><th>Error type</th><th>Duration</th><th>Started</th><th>Finished</th><th>Message</th></tr></thead>
+    <tbody>
+      {% for attempt in attempts %}
+        <tr>
+          <td>{{ attempt.attempt_number }}</td>
+          <td>{{ attempt.mode }}</td>
+          <td><span class="status">{{ attempt.status }}</span></td>
+          <td>{{ attempt.error_type }}</td>
+          <td>{% if attempt.duration_seconds is not none %}{{ attempt.duration_seconds | round(2) }}s{% endif %}</td>
+          <td>{{ attempt.started_at }}</td>
+          <td>{{ attempt.finished_at or "" }}</td>
+          <td>{{ attempt.message }}{% if attempt.next_retry_at %}<br><span class="muted">Next retry {{ attempt.next_retry_at }}</span>{% endif %}</td>
+        </tr>
+      {% else %}
+        <tr><td colspan="8" class="muted">No attempts yet.</td></tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endblock %}

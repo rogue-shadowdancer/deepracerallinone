@@ -34,7 +34,7 @@ TEAM_LEADER = "leader"
 SETTING_REGISTRATION_ENABLED = "registration_enabled"
 SETTING_DEFAULT_TEAM_MAX_MEMBERS = "default_team_max_members"
 SETTING_SCHEMA_VERSION = "schema_version"
-CURRENT_SCHEMA_VERSION = "2"
+CURRENT_SCHEMA_VERSION = "3"
 
 EVENT_ACTIVE = "active"
 EVENT_CLOSED = "closed"
@@ -61,6 +61,22 @@ DISPATCH_MODE_AUTO = "auto"
 DISPATCH_MODE_CONSOLE_API = "console_api"
 DISPATCH_MODE_SSH = "ssh"
 DISPATCH_MODES = {DISPATCH_MODE_AUTO, DISPATCH_MODE_CONSOLE_API, DISPATCH_MODE_SSH}
+
+ERROR_CONSOLE_LOGIN = "console_login_failed"
+ERROR_CONSOLE_UPLOAD = "console_upload_failed"
+ERROR_CONSOLE_INSTALL_TIMEOUT = "console_install_timeout"
+ERROR_CONSOLE_RESPONSE = "console_response_invalid"
+ERROR_SSH_AUTH = "ssh_auth_failed"
+ERROR_SSH_HOST_KEY = "ssh_host_key_mismatch"
+ERROR_SSH_REMOTE_SPACE = "ssh_remote_space"
+ERROR_SSH_INSTALL_COMMAND = "ssh_install_command_failed"
+ERROR_CHECKSUM_MISMATCH = "checksum_mismatch"
+ERROR_NETWORK = "network_error"
+ERROR_UNKNOWN = "unknown_error"
+
+DIAGNOSTIC_READY = "ready"
+DIAGNOSTIC_WARNING = "warning"
+DIAGNOSTIC_ERROR = "error"
 _UNSET = object()
 
 
@@ -292,6 +308,26 @@ def init_db(db_path: Path) -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS vehicle_diagnostics (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                vehicle_id INTEGER NOT NULL REFERENCES vehicles(id) ON DELETE CASCADE,
+                overall_status TEXT NOT NULL,
+                summary TEXT NOT NULL DEFAULT '',
+                steps_json TEXT NOT NULL DEFAULT '[]',
+                snapshot_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS backups (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                path TEXT NOT NULL,
+                size_bytes INTEGER NOT NULL DEFAULT 0,
+                reason TEXT NOT NULL DEFAULT '',
+                actor_user_id INTEGER REFERENCES users(id) ON DELETE SET NULL,
+                actor_username TEXT NOT NULL DEFAULT '',
+                created_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_sessions_token_hash ON sessions(token_hash);
             CREATE INDEX IF NOT EXISTS idx_login_attempts_username ON login_attempts(username, role, created_at);
             CREATE INDEX IF NOT EXISTS idx_audit_logs_created_at ON audit_logs(created_at);
@@ -302,6 +338,8 @@ def init_db(db_path: Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_dispatches_status_retry ON dispatches(status, next_retry_at);
             CREATE INDEX IF NOT EXISTS idx_dispatch_attempts_dispatch_id ON dispatch_attempts(dispatch_id);
             CREATE INDEX IF NOT EXISTS idx_vehicle_health_vehicle ON vehicle_health_checks(vehicle_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_vehicle_diagnostics_vehicle ON vehicle_diagnostics(vehicle_id, created_at);
+            CREATE INDEX IF NOT EXISTS idx_backups_created_at ON backups(created_at);
             """
         )
         _migrate_existing_tables(connection)
@@ -591,12 +629,13 @@ def login_locked(
     username: str,
     *,
     role: str | None,
+    remote_addr: str = "",
     limit: int,
     lockout_seconds: int,
 ) -> bool:
     since = (datetime.now(timezone.utc) - timedelta(seconds=lockout_seconds)).isoformat(timespec="seconds")
     with closing(connect(db_path)) as connection:
-        row = connection.execute(
+        username_row = connection.execute(
             """
             SELECT COUNT(*) AS failed_count
             FROM login_attempts
@@ -604,7 +643,15 @@ def login_locked(
             """,
             (normalize_username(username), role, since),
         ).fetchone()
-        return int(row["failed_count"] if row else 0) >= limit
+        remote_row = connection.execute(
+            """
+            SELECT COUNT(*) AS failed_count
+            FROM login_attempts
+            WHERE remote_addr = ? AND COALESCE(role, '') = COALESCE(?, '') AND succeeded = 0 AND created_at >= ?
+            """,
+            (remote_addr[:100], role, since),
+        ).fetchone()
+        return int(username_row["failed_count"] if username_row else 0) >= limit or int(remote_row["failed_count"] if remote_row else 0) >= limit
 
 
 def record_audit_log(
@@ -1603,6 +1650,141 @@ def list_latest_vehicle_health(db_path: Path) -> dict[int, dict[str, Any]]:
         return {int(row["vehicle_id"]): dict(row) for row in rows}
 
 
+def record_vehicle_diagnostic(
+    db_path: Path,
+    vehicle_id: int,
+    *,
+    overall_status: str,
+    summary: str,
+    steps: list[dict[str, Any]],
+    snapshot: dict[str, Any],
+) -> int:
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO vehicle_diagnostics (vehicle_id, overall_status, summary, steps_json, snapshot_json, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (
+                vehicle_id,
+                overall_status,
+                summary[:1000],
+                json.dumps(steps, ensure_ascii=False),
+                json.dumps(snapshot, ensure_ascii=False),
+                utc_now(),
+            ),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def get_vehicle_diagnostic(db_path: Path, diagnostic_id: int) -> dict[str, Any] | None:
+    with closing(connect(db_path)) as connection:
+        row = connection.execute(
+            """
+            SELECT vd.*, v.name AS vehicle_name
+            FROM vehicle_diagnostics vd
+            JOIN vehicles v ON v.id = vd.vehicle_id
+            WHERE vd.id = ?
+            """,
+            (diagnostic_id,),
+        ).fetchone()
+        if row is None:
+            return None
+        diagnostic = dict(row)
+        diagnostic["steps"] = json.loads(str(diagnostic.get("steps_json") or "[]"))
+        diagnostic["snapshot"] = json.loads(str(diagnostic.get("snapshot_json") or "{}"))
+        return diagnostic
+
+
+def list_vehicle_diagnostics(db_path: Path, vehicle_id: int | None = None, *, limit: int = 50) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        if vehicle_id is None:
+            rows = connection.execute(
+                """
+                SELECT vd.*, v.name AS vehicle_name
+                FROM vehicle_diagnostics vd
+                JOIN vehicles v ON v.id = vd.vehicle_id
+                ORDER BY vd.id DESC
+                LIMIT ?
+                """,
+                (limit,),
+            ).fetchall()
+        else:
+            rows = connection.execute(
+                """
+                SELECT vd.*, v.name AS vehicle_name
+                FROM vehicle_diagnostics vd
+                JOIN vehicles v ON v.id = vd.vehicle_id
+                WHERE vd.vehicle_id = ?
+                ORDER BY vd.id DESC
+                LIMIT ?
+                """,
+                (vehicle_id, limit),
+            ).fetchall()
+        diagnostics = []
+        for row in rows:
+            diagnostic = dict(row)
+            diagnostic["steps"] = json.loads(str(diagnostic.get("steps_json") or "[]"))
+            diagnostic["snapshot"] = json.loads(str(diagnostic.get("snapshot_json") or "{}"))
+            diagnostics.append(diagnostic)
+        return diagnostics
+
+
+def list_latest_vehicle_diagnostics(db_path: Path) -> dict[int, dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute(
+            """
+            SELECT vd.*
+            FROM vehicle_diagnostics vd
+            JOIN (
+                SELECT vehicle_id, MAX(id) AS latest_id
+                FROM vehicle_diagnostics
+                GROUP BY vehicle_id
+            ) latest ON latest.latest_id = vd.id
+            """
+        ).fetchall()
+        diagnostics: dict[int, dict[str, Any]] = {}
+        for row in rows:
+            diagnostic = dict(row)
+            diagnostic["steps"] = json.loads(str(diagnostic.get("steps_json") or "[]"))
+            diagnostic["snapshot"] = json.loads(str(diagnostic.get("snapshot_json") or "{}"))
+            diagnostics[int(row["vehicle_id"])] = diagnostic
+        return diagnostics
+
+
+def record_backup(
+    db_path: Path,
+    *,
+    path: str,
+    size_bytes: int,
+    reason: str,
+    actor_user_id: int | None = None,
+    actor_username: str = "",
+) -> int:
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            """
+            INSERT INTO backups (path, size_bytes, reason, actor_user_id, actor_username, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            """,
+            (path, size_bytes, reason[:200], actor_user_id, actor_username[:120], utc_now()),
+        )
+        connection.commit()
+        return int(cursor.lastrowid)
+
+
+def list_backups(db_path: Path, *, limit: int = 50) -> list[dict[str, Any]]:
+    with closing(connect(db_path)) as connection:
+        rows = connection.execute("SELECT * FROM backups ORDER BY id DESC LIMIT ?", (limit,)).fetchall()
+        return [dict(row) for row in rows]
+
+
+def get_backup(db_path: Path, backup_id: int) -> dict[str, Any] | None:
+    with closing(connect(db_path)) as connection:
+        return row_to_dict(connection.execute("SELECT * FROM backups WHERE id = ?", (backup_id,)).fetchone())
+
+
 def _vehicle_row_to_dict(row: sqlite3.Row) -> dict[str, Any]:
     vehicle = dict(row)
     vehicle["has_console_password"] = bool(vehicle.get("console_password_encrypted"))
@@ -1679,26 +1861,81 @@ def list_runnable_dispatches(db_path: Path, *, limit: int = 5) -> list[int]:
         return [int(row["id"]) for row in rows]
 
 
-def recover_interrupted_dispatches(db_path: Path) -> int:
+def recover_interrupted_dispatches(db_path: Path, *, stuck_seconds: int | None = None) -> int:
+    cutoff = None
+    if stuck_seconds and stuck_seconds > 0:
+        cutoff = (datetime.now(timezone.utc) - timedelta(seconds=stuck_seconds)).isoformat(timespec="seconds")
     with closing(connect(db_path)) as connection:
-        cursor = connection.execute(
-            """
-            UPDATE dispatches
-            SET status = ?, message = ?, finished_at = ?, updated_at = ?
-            WHERE status IN (?, ?, ?)
-            """,
-            (
-                DISPATCH_FAILED,
-                "Recovered after gateway restart; dispatch can be queued again by an admin",
-                utc_now(),
-                utc_now(),
-                DISPATCH_UPLOADING,
-                DISPATCH_VERIFYING,
-                DISPATCH_INSTALLING,
-            ),
-        )
+        if cutoff:
+            cursor = connection.execute(
+                """
+                UPDATE dispatches
+                SET status = ?, message = ?, finished_at = ?, updated_at = ?
+                WHERE status IN (?, ?, ?) AND updated_at <= ?
+                """,
+                (
+                    DISPATCH_FAILED,
+                    "Recovered stuck dispatch after gateway restart; retry is available",
+                    utc_now(),
+                    utc_now(),
+                    DISPATCH_UPLOADING,
+                    DISPATCH_VERIFYING,
+                    DISPATCH_INSTALLING,
+                    cutoff,
+                ),
+            )
+        else:
+            cursor = connection.execute(
+                """
+                UPDATE dispatches
+                SET status = ?, message = ?, finished_at = ?, updated_at = ?
+                WHERE status IN (?, ?, ?)
+                """,
+                (
+                    DISPATCH_FAILED,
+                    "Recovered after gateway restart; retry is available",
+                    utc_now(),
+                    utc_now(),
+                    DISPATCH_UPLOADING,
+                    DISPATCH_VERIFYING,
+                    DISPATCH_INSTALLING,
+                ),
+            )
         connection.commit()
         return int(cursor.rowcount)
+
+
+def retry_dispatch(db_path: Path, dispatch_id: int) -> None:
+    dispatch = get_dispatch(db_path, dispatch_id)
+    if dispatch is None:
+        raise GatewayStateError("Dispatch not found")
+    if dispatch["status"] not in {DISPATCH_FAILED, DISPATCH_CANCELLED}:
+        raise GatewayStateError("Only failed or cancelled dispatches can be retried")
+    with closing(connect(db_path)) as connection:
+        active_vehicle = connection.execute(
+            """
+            SELECT id FROM dispatches
+            WHERE vehicle_id = ? AND status IN (?, ?, ?, ?) AND id <> ?
+            LIMIT 1
+            """,
+            (dispatch["vehicle_id"], *ACTIVE_DISPATCH_STATUSES, dispatch_id),
+        ).fetchone()
+        if active_vehicle is not None:
+            raise VehicleBusyError("Vehicle already has an active dispatch")
+        now = utc_now()
+        connection.execute(
+            """
+            UPDATE dispatches
+            SET status = ?, message = ?, cancel_requested = 0, next_retry_at = NULL, updated_at = ?, finished_at = NULL
+            WHERE id = ?
+            """,
+            (DISPATCH_QUEUED, "Retry queued by admin", now, dispatch_id),
+        )
+        connection.execute(
+            "UPDATE submissions SET status = ?, updated_at = ? WHERE id = ?",
+            (SUBMISSION_DISPATCHING, now, dispatch["submission_id"]),
+        )
+        connection.commit()
 
 
 def schedule_dispatch_retry_or_fail(

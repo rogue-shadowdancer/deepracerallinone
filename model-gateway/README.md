@@ -18,7 +18,7 @@ The gateway does not run on the car or the training stack. The default delivery 
 - SSH adapter with rsync preference, SFTP resume fallback, retry, keepalive, remote SHA256 verification, and install command execution.
 - No automatic model activation. The gateway installs models only.
 - CSRF protection, session expiry, login rate limiting, competition-mode config checks, and admin audit logs.
-- Persistent dispatch worker, retry scheduling, vehicle preflight records, live admin status JSON, events, rounds, submission versions, candidate marking, and CSV exports.
+- Persistent dispatch worker, retry scheduling, structured vehicle diagnostics, live admin status JSON, events, rounds, submission versions, candidate marking, backups, support bundles, and CSV exports.
 
 ## Setup
 
@@ -37,7 +37,10 @@ $env:GATEWAY_BOOTSTRAP_ADMIN_PASSWORD="replace-this"
 $env:GATEWAY_SESSION_SECRET="replace-with-a-long-random-value"
 $env:GATEWAY_CREDENTIAL_SECRET="replace-with-a-long-random-value"
 $env:GATEWAY_COMPETITION_MODE="true"
+$env:GATEWAY_COOKIE_SECURE="true"
 ```
+
+For HTTP-only local LAN deployments, use `GATEWAY_ALLOW_INSECURE_LAN_COOKIE=true` instead of `GATEWAY_COOKIE_SECURE=true` and document that decision in your event runbook.
 
 Run the server:
 
@@ -64,6 +67,7 @@ If no admin exists yet, startup creates one from `GATEWAY_BOOTSTRAP_ADMIN_USERNA
 | `GATEWAY_SESSION_MAX_AGE_SECONDS` | `28800` | Max session lifetime before login is required again. |
 | `GATEWAY_LOGIN_RATE_LIMIT` | `5` | Failed login attempts allowed during the lockout window. |
 | `GATEWAY_COOKIE_SECURE` | `false` | Set true when serving through HTTPS. |
+| `GATEWAY_ALLOW_INSECURE_LAN_COOKIE` | `false` | Explicit competition-mode override for HTTP-only LAN deployments. |
 | `GATEWAY_DATA_DIR` | `data` | SQLite database and upload storage directory. |
 | `GATEWAY_MAX_UPLOAD_BYTES` | `1073741824` | Max upload size, default 1 GB. |
 | `GATEWAY_VEHICLE_TIMEOUT_SECONDS` | `30` | HTTP timeout for vehicle Console API calls. |
@@ -74,6 +78,9 @@ If no admin exists yet, startup creates one from `GATEWAY_BOOTSTRAP_ADMIN_USERNA
 | `GATEWAY_SSH_CHUNK_BYTES` | `1048576` | SFTP chunk size. |
 | `GATEWAY_DISPATCH_WORKER_ENABLED` | `true` | Enables the persistent queued dispatch worker. |
 | `GATEWAY_DISPATCH_MAX_RETRIES` | `1` | Worker-level dispatch retries after all selected delivery modes fail. |
+| `GATEWAY_STUCK_DISPATCH_SECONDS` | `900` | On worker start, marks older in-progress dispatches as failed/retryable. |
+| `GATEWAY_AUTO_BACKUP_ENABLED` | `true` | Creates local backups before high-risk admin operations. |
+| `GATEWAY_SUPPORT_BUNDLE_LOG_LINES` | `200` | Recent audit rows included in support bundle exports. |
 
 ## Admin Workflow
 
@@ -83,9 +90,10 @@ If no admin exists yet, startup creates one from `GATEWAY_BOOTSTRAP_ADMIN_USERNA
 4. Open `/admin/teams` to create teams, change team limits, and move users between teams.
 5. Open `/admin/vehicles` and register each car.
 6. Open `/admin/events` to manage competition events and rounds, including upload and dispatch limits.
-7. Open `/admin/health` to run vehicle preflight checks before races.
+7. Open `/admin/health` to run vehicle diagnostics before races.
 8. Review uploads in `/admin`, approve or reject them, select a vehicle and delivery mode, then dispatch.
-9. Use `/admin/audit` and CSV export links for after-action records.
+9. Use dispatch timeline pages for retry/cancel/detail operations.
+10. Use `/admin/backups`, `/admin/support-bundle`, `/admin/audit`, and CSV export links for after-action records.
 
 Batch CSV format:
 
@@ -142,12 +150,29 @@ Template variables:
 
 Configure `SSH host key SHA256` on the vehicle when available. If it is set, the gateway verifies the host key before executing SSH operations.
 
+## Real Vehicle Integration Runbook
+
+1. Register each car in `/admin/vehicles` with Console URL, delivery mode, and SSH settings if SSH fallback is needed.
+2. Record the SSH host key fingerprint before saving SSH credentials.
+3. Open `/admin/health` and run diagnostics for each vehicle.
+4. Open the vehicle diagnostics detail page and confirm Console login, `isModelLoading`, SSH connectivity, artifact-root write access, disk space, rsync availability, and ROS2 model loader service.
+5. Upload a small known-good physical model archive through a test user/team.
+6. Dispatch once with Console API, once with SSH if configured, and once with Auto after intentionally breaking the primary mode in a controlled way.
+7. If a dispatch fails, open its timeline, inspect `error_type`, fix the vehicle or network issue, then use Retry.
+8. Export a support bundle and confirm it contains no plaintext vehicle passwords.
+
 ## Maintenance
 
 Back up data:
 
 ```powershell
 python -m model_gateway.maintenance backup .\backups
+```
+
+Run diagnostics from a terminal:
+
+```powershell
+python -m model_gateway.maintenance doctor --vehicle-id 1
 ```
 
 Restore data:
@@ -162,12 +187,20 @@ Remove failed uploads older than seven days:
 python -m model_gateway.maintenance cleanup --older-than-days 7
 ```
 
+Preview cleanup before deleting:
+
+```powershell
+python -m model_gateway.maintenance cleanup --older-than-days 7 --dry-run
+```
+
 ## Competition Checklist
 
 - Set `GATEWAY_COMPETITION_MODE=true`.
 - Replace `admin/admin`, `GATEWAY_SESSION_SECRET`, and `GATEWAY_CREDENTIAL_SECRET`.
 - Run `python -m pytest model-gateway/tests` before the event.
-- Register vehicles, run preflight, and confirm Console API or SSH delivery for each car.
+- Register vehicles, run diagnostics, and confirm Console API or SSH delivery for each car.
+- Create a manual backup in `/admin/backups` before opening uploads.
+- Keep `/admin/health` open during model dispatches and use support bundles for post-event debugging.
 - Create the event and round before opening uploads.
 - Export users, teams, submissions, and dispatches after the event.
 
