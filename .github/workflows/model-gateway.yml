@@ -1,0 +1,29 @@
+name: Model Gateway
+
+on:
+  push:
+    paths:
+      - "model-gateway/**"
+      - ".github/workflows/model-gateway.yml"
+  pull_request:
+    paths:
+      - "model-gateway/**"
+      - ".github/workflows/model-gateway.yml"
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: model-gateway
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - run: python -m pip install -e ".[test]"
+      - run: python -m compileall src tests
+      - run: python -m pytest tests
+      - name: Diff check
+        working-directory: .
+        run: git diff --check
