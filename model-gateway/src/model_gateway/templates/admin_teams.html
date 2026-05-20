@@ -24,11 +24,28 @@
             <strong>{{ team.name }}</strong><br>
             <span class="muted">{{ team.status }}</span>
           </td>
-          <td><code>{{ team.join_code }}</code></td>
+          <td>
+            <code>{{ team.join_code }}</code>
+            <form method="post" action="/admin/teams/{{ team.id }}/regenerate-code">
+              <button class="secondary" type="submit">Regenerate</button>
+            </form>
+          </td>
           <td>
             {{ team.member_count }}{% if team.max_members %}/{{ team.max_members }}{% endif %}
             {% for member in team.members %}
-              <br><span class="muted">{{ member.display_name }} ({{ member.role }})</span>
+              <div class="member-edit">
+                <span>{{ member.display_name }} <span class="muted">{{ member.username }}</span></span>
+                <form method="post" action="/admin/teams/{{ team.id }}/members/{{ member.user_id }}/role" class="mini-form">
+                  <select name="role">
+                    <option value="member" {% if member.role == "member" %}selected{% endif %}>Member</option>
+                    <option value="leader" {% if member.role == "leader" %}selected{% endif %}>Leader</option>
+                  </select>
+                  <button class="secondary" type="submit">Role</button>
+                </form>
+                <form method="post" action="/admin/teams/{{ team.id }}/members/{{ member.user_id }}/remove">
+                  <button class="secondary" type="submit">Remove</button>
+                </form>
+              </div>
             {% endfor %}
           </td>
           <td>

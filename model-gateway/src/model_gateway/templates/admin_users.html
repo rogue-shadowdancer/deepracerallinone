@@ -40,12 +40,42 @@
     <tbody>
       {% for user in users %}
         <tr>
-          <td>{{ user.display_name }}<br><span class="muted">{{ user.username }}</span></td>
-          <td>{{ user.role }}</td>
-          <td><span class="status">{{ user.status }}</span></td>
-          <td>{{ user.team_name or "" }}</td>
+          <td>
+            <label>Username <input form="user-update-{{ user.id }}" name="username" value="{{ user.username }}" required></label>
+            <label>Display <input form="user-update-{{ user.id }}" name="display_name" value="{{ user.display_name }}" required></label>
+          </td>
+          <td>
+            <select form="user-update-{{ user.id }}" name="role">
+              <option value="user" {% if user.role == "user" %}selected{% endif %}>User</option>
+              <option value="admin" {% if user.role == "admin" %}selected{% endif %}>Admin</option>
+            </select>
+          </td>
+          <td>
+            <select form="user-update-{{ user.id }}" name="status">
+              <option value="active" {% if user.status == "active" %}selected{% endif %}>Active</option>
+              <option value="pending" {% if user.status == "pending" %}selected{% endif %}>Pending</option>
+              <option value="disabled" {% if user.status == "disabled" %}selected{% endif %}>Disabled</option>
+            </select>
+          </td>
+          <td>
+            <select form="user-update-{{ user.id }}" name="team_id">
+              <option value="">No team</option>
+              {% for team in teams %}
+                {% if team.status == "active" %}
+                  <option value="{{ team.id }}" {% if user.team_id == team.id %}selected{% endif %}>{{ team.name }}</option>
+                {% endif %}
+              {% endfor %}
+            </select>
+            <select form="user-update-{{ user.id }}" name="team_role">
+              <option value="member" {% if user.team_role == "member" %}selected{% endif %}>Member</option>
+              <option value="leader" {% if user.team_role == "leader" %}selected{% endif %}>Leader</option>
+            </select>
+          </td>
           <td>{{ user.active_sessions }}</td>
           <td class="actions">
+            <form id="user-update-{{ user.id }}" method="post" action="/admin/users/{{ user.id }}/update">
+              <button type="submit">Save changes</button>
+            </form>
             {% if user.status == "pending" %}
               <form method="post" action="/admin/users/{{ user.id }}/approve"><button class="secondary" type="submit">Approve</button></form>
             {% endif %}

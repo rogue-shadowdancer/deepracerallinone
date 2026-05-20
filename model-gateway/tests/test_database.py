@@ -6,8 +6,10 @@ import pytest
 
 from model_gateway.database import (
     DISPATCH_FAILED,
+    ROLE_ADMIN,
     ROLE_USER,
     SUBMISSION_APPROVED,
+    TEAM_MEMBER,
     TEAM_LEADER,
     USER_ACTIVE,
     USER_PENDING,
@@ -22,15 +24,24 @@ from model_gateway.database import (
     create_user,
     create_vehicle,
     cancel_dispatch,
+    get_team,
     get_dispatch,
     get_submission,
+    get_user,
+    get_vehicle,
     get_user_by_session,
     init_db,
     join_team,
+    join_team_by_code,
     list_dispatch_attempts,
     move_user_to_team,
+    regenerate_team_join_code,
+    remove_team_member,
     start_dispatch_attempt,
     finish_dispatch_attempt,
+    update_team_member_role,
+    update_user,
+    update_vehicle,
     update_dispatch_status,
     NewSubmission,
 )
@@ -143,3 +154,104 @@ def test_cancel_queued_dispatch_returns_submission_to_approved(tmp_path: Path) -
 
     assert get_dispatch(db_path, dispatch_id)["status"] == "cancelled"
     assert get_submission(db_path, submission_id)["status"] == SUBMISSION_APPROVED
+
+
+def test_vehicle_update_preserves_replaces_and_clears_credentials(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    vehicle_id = create_vehicle(
+        db_path,
+        "Car",
+        "http://car.local",
+        "console",
+        credential_secret="secret",
+        ssh_password="ssh",
+    )
+
+    update_vehicle(
+        db_path,
+        vehicle_id,
+        name="Car Updated",
+        console_url="http://car2.local",
+        credential_secret="secret",
+        delivery_mode="ssh",
+        ssh_host="car2.local",
+        ssh_port=2222,
+        ssh_username="deepracer",
+        ssh_remote_artifact_root="/models",
+    )
+    vehicle = get_vehicle(db_path, vehicle_id)
+    assert vehicle["name"] == "Car Updated"
+    assert vehicle["delivery_mode"] == "ssh"
+    assert vehicle["ssh_host"] == "car2.local"
+    assert vehicle["has_console_password"]
+    assert vehicle["has_ssh_password"]
+
+    update_vehicle(
+        db_path,
+        vehicle_id,
+        name="Car Updated",
+        console_url="http://car2.local",
+        credential_secret="secret",
+        delivery_mode="ssh",
+        clear_console_password=True,
+        clear_ssh_password=True,
+    )
+    vehicle = get_vehicle(db_path, vehicle_id)
+    assert not vehicle["has_console_password"]
+    assert not vehicle["has_ssh_password"]
+
+
+def test_update_user_edits_fields_team_and_protects_last_admin(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    admin_id = create_user(db_path, "admin", "Admin", "pw", role=ROLE_ADMIN, status=USER_ACTIVE)
+    user_id = create_user(db_path, "racer", "Racer", "pw", role=ROLE_USER, status=USER_ACTIVE)
+    team_id = create_team(db_path, "Team")
+
+    update_user(
+        db_path,
+        user_id,
+        username="pilot",
+        display_name="Pilot",
+        role=ROLE_USER,
+        status=USER_ACTIVE,
+        team_id=team_id,
+        team_role=TEAM_LEADER,
+    )
+    user = get_user(db_path, user_id)
+    assert user["username"] == "pilot"
+    assert user["display_name"] == "Pilot"
+    assert get_team(db_path, team_id)["members"][0]["role"] == TEAM_LEADER
+
+    with pytest.raises(Exception, match="last active admin"):
+        update_user(
+            db_path,
+            admin_id,
+            username="admin",
+            display_name="Admin",
+            role=ROLE_USER,
+            status=USER_ACTIVE,
+        )
+
+
+def test_team_join_code_and_member_editing(tmp_path: Path) -> None:
+    db_path = tmp_path / "gateway.sqlite3"
+    init_db(db_path)
+    user_id = create_user(db_path, "racer", "Racer", "pw", role=ROLE_USER, status=USER_ACTIVE)
+    team_id = create_team(db_path, "Team", max_members=1)
+    old_code = get_team(db_path, team_id)["join_code"]
+    new_code = regenerate_team_join_code(db_path, team_id)
+
+    with pytest.raises(Exception, match="not found"):
+        join_team_by_code(db_path, old_code, user_id)
+    join_team_by_code(db_path, new_code, user_id)
+    update_team_member_role(db_path, team_id, user_id, TEAM_LEADER)
+    assert get_team(db_path, team_id)["members"][0]["role"] == TEAM_LEADER
+
+    extra_id = create_user(db_path, "extra", "Extra", "pw", role=ROLE_USER, status=USER_ACTIVE)
+    with pytest.raises(Exception, match="Team is full"):
+        join_team(db_path, team_id, extra_id)
+
+    remove_team_member(db_path, team_id, user_id)
+    assert get_team(db_path, team_id)["member_count"] == 0

@@ -11,6 +11,8 @@ from model_gateway.database import (
     USER_ACTIVE,
     create_team,
     create_user,
+    get_team,
+    get_vehicle,
     get_user_by_username,
     join_team,
     list_submissions,
@@ -145,3 +147,127 @@ def test_admin_user_batch_and_registration_toggle(client: TestClient, settings: 
     batch = client.post("/admin/users/batch", data={"prefix": "racer", "count": "2", "team_name": "Batch Team"})
     assert batch.status_code == 200
     assert "racer001" in batch.text
+
+
+def test_admin_vehicle_update_route_preserves_and_clears_credentials(client: TestClient, settings: Settings) -> None:
+    _login_admin(client)
+    client.post(
+        "/admin/vehicles",
+        data={
+            "name": "Car 1",
+            "console_url": "http://car.local",
+            "console_password": "console",
+            "delivery_mode": "auto",
+            "ssh_host": "car.local",
+            "ssh_port": "22",
+            "ssh_username": "ubuntu",
+            "ssh_password": "ssh",
+            "ssh_remote_artifact_root": "/opt/aws/deepracer/artifacts",
+        },
+    )
+    vehicle_id = list_vehicles(settings.db_path)[0]["id"]
+
+    response = client.post(
+        f"/admin/vehicles/{vehicle_id}/update",
+        data={
+            "name": "Car 2",
+            "console_url": "http://car2.local",
+            "delivery_mode": "ssh",
+            "ssh_host": "car2.local",
+            "ssh_port": "2200",
+            "ssh_username": "deepracer",
+            "ssh_private_key_path": "C:/keys/car.pem",
+            "ssh_remote_artifact_root": "/models",
+            "ssh_install_command_template": "echo {model_dir}",
+            "notes": "updated",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    vehicle = get_vehicle(settings.db_path, vehicle_id)
+    assert vehicle["name"] == "Car 2"
+    assert vehicle["delivery_mode"] == "ssh"
+    assert vehicle["ssh_port"] == 2200
+    assert vehicle["has_console_password"]
+    assert vehicle["has_ssh_password"]
+
+    client.post(
+        f"/admin/vehicles/{vehicle_id}/update",
+        data={
+            "name": "Car 2",
+            "console_url": "http://car2.local",
+            "delivery_mode": "ssh",
+            "clear_console_password": "true",
+            "clear_ssh_password": "true",
+            "ssh_port": "22",
+            "ssh_remote_artifact_root": "/opt/aws/deepracer/artifacts",
+        },
+    )
+    vehicle = get_vehicle(settings.db_path, vehicle_id)
+    assert not vehicle["has_console_password"]
+    assert not vehicle["has_ssh_password"]
+
+
+def test_admin_user_update_route_and_last_admin_protection(client: TestClient, settings: Settings) -> None:
+    _login_admin(client)
+    user_id = create_user(settings.db_path, "racer", "Racer", "pw", role=ROLE_USER, status=USER_ACTIVE)
+    team_id = create_team(settings.db_path, "Editable Team")
+
+    response = client.post(
+        f"/admin/users/{user_id}/update",
+        data={
+            "username": "pilot",
+            "display_name": "Pilot",
+            "role": "user",
+            "status": "active",
+            "team_id": str(team_id),
+            "team_role": "leader",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert get_user_by_username(settings.db_path, "pilot")["display_name"] == "Pilot"
+    assert get_team(settings.db_path, team_id)["members"][0]["role"] == "leader"
+
+    admin = get_user_by_username(settings.db_path, "admin")
+    response = client.post(
+        f"/admin/users/{admin['id']}/update",
+        data={
+            "username": "admin",
+            "display_name": "Admin",
+            "role": "user",
+            "status": "active",
+            "team_id": "",
+            "team_role": "member",
+        },
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "last+active+admin" in response.headers["location"]
+
+
+def test_admin_team_member_routes(client: TestClient, settings: Settings) -> None:
+    _login_admin(client)
+    user_id = create_user(settings.db_path, "racer", "Racer", "pw", role=ROLE_USER, status=USER_ACTIVE)
+    team_id = create_team(settings.db_path, "Team", max_members=2)
+    join_team(settings.db_path, team_id, user_id)
+    old_code = get_team(settings.db_path, team_id)["join_code"]
+
+    response = client.post(f"/admin/teams/{team_id}/regenerate-code", follow_redirects=False)
+    assert response.status_code == 303
+    assert get_team(settings.db_path, team_id)["join_code"] != old_code
+
+    response = client.post(
+        f"/admin/teams/{team_id}/members/{user_id}/role",
+        data={"role": "leader"},
+        follow_redirects=False,
+    )
+    assert response.status_code == 303
+    assert get_team(settings.db_path, team_id)["members"][0]["role"] == "leader"
+
+    response = client.post(f"/admin/teams/{team_id}/members/{user_id}/remove", follow_redirects=False)
+    assert response.status_code == 303
+    assert get_team(settings.db_path, team_id)["member_count"] == 0

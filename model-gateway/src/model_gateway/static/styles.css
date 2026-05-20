@@ -183,6 +183,17 @@ label {
   font-weight: 600;
 }
 
+.checkbox-label {
+  align-items: center;
+  display: flex;
+  gap: 8px;
+  font-weight: 400;
+}
+
+.checkbox-label input {
+  width: auto;
+}
+
 input,
 textarea,
 select {
@@ -282,6 +293,23 @@ th {
 
 .actions form {
   margin-bottom: 8px;
+}
+
+.member-edit {
+  border-top: 1px solid var(--line);
+  display: grid;
+  gap: 6px;
+  padding: 8px 0;
+}
+
+.member-edit:first-of-type {
+  border-top: 0;
+}
+
+.mini-form {
+  display: grid;
+  grid-template-columns: minmax(110px, 1fr) auto;
+  gap: 6px;
 }
 
 .reject-form,

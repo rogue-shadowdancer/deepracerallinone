@@ -58,13 +58,18 @@ from model_gateway.database import (
     list_users,
     list_vehicles,
     move_user_to_team,
+    regenerate_team_join_code,
     reject_submission,
+    remove_team_member,
     reset_user_password,
     revoke_session,
     revoke_session_by_id,
     set_setting,
     team_members_snapshot,
     update_team,
+    update_team_member_role,
+    update_user,
+    update_vehicle,
 )
 from model_gateway.dispatch import dispatch_model_to_vehicle
 from model_gateway.security import CredentialCodec, generate_password
@@ -411,14 +416,47 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     @app.post("/admin/users/{user_id}/approve")
     def admin_approve_user(request: Request, user_id: int) -> Response:
         require_admin(request)
-        approve_user(settings.db_path, user_id)
-        return redirect("/admin/users", notice="User approved")
+        try:
+            approve_user(settings.db_path, user_id)
+            return redirect("/admin/users", notice="User approved")
+        except GatewayStateError as exc:
+            return redirect("/admin/users", error=str(exc))
+
+    @app.post("/admin/users/{user_id}/update")
+    def admin_update_user(
+        request: Request,
+        user_id: int,
+        username: str = Form(...),
+        display_name: str = Form(""),
+        role: str = Form(ROLE_USER),
+        status: str = Form(USER_ACTIVE),
+        team_id: str = Form(""),
+        team_role: str = Form("member"),
+    ) -> Response:
+        require_admin(request)
+        try:
+            update_user(
+                settings.db_path,
+                user_id,
+                username=username,
+                display_name=display_name,
+                role=role,
+                status=status,
+                team_id=_optional_int(team_id),
+                team_role=team_role,
+            )
+            return redirect("/admin/users", notice="User updated")
+        except (GatewayStateError, sqlite3.IntegrityError) as exc:
+            return redirect("/admin/users", error=str(exc))
 
     @app.post("/admin/users/{user_id}/disable")
     def admin_disable_user(request: Request, user_id: int) -> Response:
         require_admin(request)
-        disable_user(settings.db_path, user_id)
-        return redirect("/admin/users", notice="User disabled")
+        try:
+            disable_user(settings.db_path, user_id)
+            return redirect("/admin/users", notice="User disabled")
+        except GatewayStateError as exc:
+            return redirect("/admin/users", error=str(exc))
 
     @app.post("/admin/users/{user_id}/reset-password")
     def admin_reset_password(request: Request, user_id: int) -> Response:
@@ -488,6 +526,35 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         except GatewayStateError as exc:
             return redirect("/admin/teams", error=str(exc))
 
+    @app.post("/admin/teams/{team_id}/regenerate-code")
+    def admin_regenerate_team_code(request: Request, team_id: int) -> Response:
+        require_admin(request)
+        try:
+            regenerate_team_join_code(settings.db_path, team_id)
+            return redirect("/admin/teams", notice="Team join code regenerated")
+        except GatewayStateError as exc:
+            return redirect("/admin/teams", error=str(exc))
+
+    @app.post("/admin/teams/{team_id}/members/{user_id}/remove")
+    def admin_remove_team_member(request: Request, team_id: int, user_id: int) -> Response:
+        require_admin(request)
+        remove_team_member(settings.db_path, team_id, user_id)
+        return redirect("/admin/teams", notice="Team member removed")
+
+    @app.post("/admin/teams/{team_id}/members/{user_id}/role")
+    def admin_update_team_member_role(
+        request: Request,
+        team_id: int,
+        user_id: int,
+        role: str = Form(...),
+    ) -> Response:
+        require_admin(request)
+        try:
+            update_team_member_role(settings.db_path, team_id, user_id, role)
+            return redirect("/admin/teams", notice="Team member role updated")
+        except GatewayStateError as exc:
+            return redirect("/admin/teams", error=str(exc))
+
     @app.post("/admin/settings/registration")
     def admin_registration_settings(
         request: Request,
@@ -551,6 +618,50 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             )
             return redirect("/admin/vehicles", notice="Vehicle saved")
         except GatewayStateError as exc:
+            return redirect("/admin/vehicles", error=str(exc))
+
+    @app.post("/admin/vehicles/{vehicle_id}/update")
+    def update_vehicle_route(
+        request: Request,
+        vehicle_id: int,
+        name: str = Form(...),
+        console_url: str = Form(""),
+        console_password: str = Form(""),
+        clear_console_password: str = Form("false"),
+        delivery_mode: str = Form(DISPATCH_MODE_AUTO),
+        ssh_host: str = Form(""),
+        ssh_port: int = Form(22),
+        ssh_username: str = Form(""),
+        ssh_password: str = Form(""),
+        clear_ssh_password: str = Form("false"),
+        ssh_private_key_path: str = Form(""),
+        ssh_remote_artifact_root: str = Form("/opt/aws/deepracer/artifacts"),
+        ssh_install_command_template: str = Form(""),
+        notes: str = Form(""),
+    ) -> Response:
+        require_admin(request)
+        try:
+            update_vehicle(
+                settings.db_path,
+                vehicle_id,
+                name=name,
+                console_url=console_url,
+                console_password=console_password or None,
+                clear_console_password=clear_console_password == "true",
+                credential_secret=settings.credential_secret,
+                delivery_mode=delivery_mode,
+                ssh_host=ssh_host,
+                ssh_port=ssh_port,
+                ssh_username=ssh_username,
+                ssh_password=ssh_password or None,
+                clear_ssh_password=clear_ssh_password == "true",
+                ssh_private_key_path=ssh_private_key_path,
+                ssh_remote_artifact_root=ssh_remote_artifact_root,
+                ssh_install_command_template=ssh_install_command_template,
+                notes=notes,
+            )
+            return redirect("/admin/vehicles", notice="Vehicle updated")
+        except (GatewayStateError, sqlite3.IntegrityError) as exc:
             return redirect("/admin/vehicles", error=str(exc))
 
     @app.post("/admin/vehicles/{vehicle_id}/test-console")

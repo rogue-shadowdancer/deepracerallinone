@@ -328,7 +328,9 @@ def list_users(db_path: Path) -> list[dict[str, Any]]:
             """
             SELECT
                 u.*,
+                t.id AS team_id,
                 t.name AS team_name,
+                tm.role AS team_role,
                 COUNT(s.id) FILTER (WHERE s.revoked_at IS NULL) AS active_sessions
             FROM users u
             LEFT JOIN team_memberships tm ON tm.user_id = u.id
@@ -457,10 +459,91 @@ def disable_user(db_path: Path, user_id: int) -> None:
         connection.commit()
 
 
+def update_user(
+    db_path: Path,
+    user_id: int,
+    *,
+    username: str,
+    display_name: str,
+    role: str,
+    status: str,
+    team_id: int | None = None,
+    team_role: str = TEAM_MEMBER,
+) -> None:
+    if role not in {ROLE_ADMIN, ROLE_USER}:
+        raise GatewayStateError("Invalid user role")
+    if status not in {USER_ACTIVE, USER_PENDING, USER_DISABLED}:
+        raise GatewayStateError("Invalid user status")
+    username = normalize_username(username)
+    display_name = display_name.strip() or username
+    if team_role not in {TEAM_MEMBER, TEAM_LEADER}:
+        raise GatewayStateError("Invalid team role")
+
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute("SELECT * FROM users WHERE id = ?", (user_id,)).fetchone()
+        if current is None:
+            raise GatewayStateError("User not found")
+        if _would_remove_last_active_admin(connection, user_id, role, status):
+            raise GatewayStateError("Cannot disable or demote the last active admin")
+        connection.execute(
+            """
+            UPDATE users
+            SET username = ?, display_name = ?, role = ?, status = ?, updated_at = ?
+            WHERE id = ?
+            """,
+            (username, display_name, role, status, utc_now(), user_id),
+        )
+        if role != ROLE_USER or team_id is None:
+            connection.execute("DELETE FROM team_memberships WHERE user_id = ?", (user_id,))
+        else:
+            connection.execute("DELETE FROM team_memberships WHERE user_id = ?", (user_id,))
+            _join_team_with_connection(connection, team_id, user_id, team_role)
+        if status == USER_DISABLED:
+            connection.execute(
+                "UPDATE sessions SET revoked_at = ? WHERE user_id = ? AND revoked_at IS NULL",
+                (utc_now(), user_id),
+            )
+        connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
+
+
+def _would_remove_last_active_admin(
+    connection: sqlite3.Connection,
+    user_id: int,
+    new_role: str,
+    new_status: str,
+) -> bool:
+    if new_role == ROLE_ADMIN and new_status == USER_ACTIVE:
+        return False
+    current = connection.execute("SELECT role, status FROM users WHERE id = ?", (user_id,)).fetchone()
+    if current is None:
+        raise GatewayStateError("User not found")
+    if current["role"] != ROLE_ADMIN or current["status"] != USER_ACTIVE:
+        return False
+    other_active_admin = connection.execute(
+        "SELECT id FROM users WHERE role = ? AND status = ? AND id != ? LIMIT 1",
+        (ROLE_ADMIN, USER_ACTIVE, user_id),
+    ).fetchone()
+    return other_active_admin is None
+
+
 def set_user_status(db_path: Path, user_id: int, status: str) -> None:
     if status not in {USER_ACTIVE, USER_PENDING, USER_DISABLED}:
         raise GatewayStateError("Invalid user status")
-    with closing(connect(db_path)) as connection:
+    connection = connect(db_path)
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        current = connection.execute("SELECT role FROM users WHERE id = ?", (user_id,)).fetchone()
+        if current is None:
+            raise GatewayStateError("User not found")
+        if _would_remove_last_active_admin(connection, user_id, current["role"], status):
+            raise GatewayStateError("Cannot disable or demote the last active admin")
         cursor = connection.execute(
             "UPDATE users SET status = ?, updated_at = ? WHERE id = ?",
             (status, utc_now(), user_id),
@@ -468,6 +551,11 @@ def set_user_status(db_path: Path, user_id: int, status: str) -> None:
         if cursor.rowcount == 0:
             raise GatewayStateError("User not found")
         connection.commit()
+    except Exception:
+        connection.rollback()
+        raise
+    finally:
+        connection.close()
 
 
 def reset_user_password(db_path: Path, user_id: int, password: str | None = None) -> str:
@@ -672,6 +760,25 @@ def leave_team(db_path: Path, user_id: int) -> None:
         connection.commit()
 
 
+def remove_team_member(db_path: Path, team_id: int, user_id: int) -> None:
+    with closing(connect(db_path)) as connection:
+        connection.execute("DELETE FROM team_memberships WHERE team_id = ? AND user_id = ?", (team_id, user_id))
+        connection.commit()
+
+
+def update_team_member_role(db_path: Path, team_id: int, user_id: int, role: str) -> None:
+    if role not in {TEAM_MEMBER, TEAM_LEADER}:
+        raise GatewayStateError("Invalid team role")
+    with closing(connect(db_path)) as connection:
+        cursor = connection.execute(
+            "UPDATE team_memberships SET role = ? WHERE team_id = ? AND user_id = ?",
+            (role, team_id, user_id),
+        )
+        if cursor.rowcount == 0:
+            raise GatewayStateError("Team member not found")
+        connection.commit()
+
+
 def update_team(
     db_path: Path,
     team_id: int,
@@ -695,6 +802,19 @@ def update_team(
             (new_name, max_members, new_status, utc_now(), team_id),
         )
         connection.commit()
+
+
+def regenerate_team_join_code(db_path: Path, team_id: int) -> str:
+    if get_team(db_path, team_id) is None:
+        raise GatewayStateError("Team not found")
+    code = _unique_join_code(db_path)
+    with closing(connect(db_path)) as connection:
+        connection.execute(
+            "UPDATE teams SET join_code = ?, updated_at = ? WHERE id = ?",
+            (code, utc_now(), team_id),
+        )
+        connection.commit()
+    return code
 
 
 def move_user_to_team(db_path: Path, user_id: int, team_id: int, *, role: str = TEAM_MEMBER) -> None:
@@ -884,6 +1004,83 @@ def create_vehicle(
             return int(cursor.lastrowid)
         row = connection.execute("SELECT id FROM vehicles WHERE name = ?", (name.strip(),)).fetchone()
         return int(row["id"])
+
+
+def update_vehicle(
+    db_path: Path,
+    vehicle_id: int,
+    *,
+    name: str,
+    console_url: str = "",
+    console_password: str | None = None,
+    clear_console_password: bool = False,
+    credential_secret: str = "",
+    delivery_mode: str = DISPATCH_MODE_AUTO,
+    ssh_host: str = "",
+    ssh_port: int = 22,
+    ssh_username: str = "",
+    ssh_password: str | None = None,
+    clear_ssh_password: bool = False,
+    ssh_private_key_path: str = "",
+    ssh_remote_artifact_root: str = "/opt/aws/deepracer/artifacts",
+    ssh_install_command_template: str = "",
+    notes: str = "",
+) -> None:
+    if delivery_mode not in DISPATCH_MODES:
+        raise GatewayStateError("Invalid vehicle delivery mode")
+    if console_url and not console_url.startswith(("http://", "https://")):
+        raise GatewayStateError("Vehicle URL must start with http:// or https://")
+    codec = CredentialCodec(credential_secret)
+    with closing(connect(db_path)) as connection:
+        current = connection.execute("SELECT * FROM vehicles WHERE id = ?", (vehicle_id,)).fetchone()
+        if current is None:
+            raise GatewayStateError("Vehicle not found")
+        console_secret = current["console_password_encrypted"]
+        if clear_console_password:
+            console_secret = None
+        elif console_password:
+            console_secret = codec.encrypt(console_password)
+        ssh_secret = current["ssh_password_encrypted"]
+        if clear_ssh_password:
+            ssh_secret = None
+        elif ssh_password:
+            ssh_secret = codec.encrypt(ssh_password)
+        connection.execute(
+            """
+            UPDATE vehicles
+            SET name = ?,
+                console_url = ?,
+                console_password_encrypted = ?,
+                delivery_mode = ?,
+                ssh_host = ?,
+                ssh_port = ?,
+                ssh_username = ?,
+                ssh_password_encrypted = ?,
+                ssh_private_key_path = ?,
+                ssh_remote_artifact_root = ?,
+                ssh_install_command_template = ?,
+                notes = ?,
+                updated_at = ?
+            WHERE id = ?
+            """,
+            (
+                name.strip(),
+                console_url.rstrip("/"),
+                console_secret,
+                delivery_mode,
+                ssh_host.strip(),
+                ssh_port or 22,
+                ssh_username.strip(),
+                ssh_secret,
+                ssh_private_key_path.strip(),
+                ssh_remote_artifact_root.strip() or "/opt/aws/deepracer/artifacts",
+                ssh_install_command_template.strip(),
+                notes.strip(),
+                utc_now(),
+                vehicle_id,
+            ),
+        )
+        connection.commit()
 
 
 def list_vehicles(db_path: Path) -> list[dict[str, Any]]:

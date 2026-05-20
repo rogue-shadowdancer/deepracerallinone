@@ -39,23 +39,51 @@
 <section class="panel">
   <h2>Configured vehicles</h2>
   <table>
-    <thead><tr><th>Name</th><th>Mode</th><th>Console</th><th>SSH</th><th>Credential</th><th>Actions</th></tr></thead>
+    <thead><tr><th>Identity</th><th>Console</th><th>SSH</th><th>Install</th><th>Credentials</th><th>Actions</th></tr></thead>
     <tbody>
       {% for vehicle in vehicles %}
         <tr>
-          <td>{{ vehicle.name }}</td>
-          <td>{{ vehicle.delivery_mode }}</td>
           <td>
+            <label>Name <input form="vehicle-update-{{ vehicle.id }}" name="name" value="{{ vehicle.name }}" required></label>
+            <label>Mode
+              <select form="vehicle-update-{{ vehicle.id }}" name="delivery_mode">
+                <option value="auto" {% if vehicle.delivery_mode == "auto" %}selected{% endif %}>Auto</option>
+                <option value="console_api" {% if vehicle.delivery_mode == "console_api" %}selected{% endif %}>Console API</option>
+                <option value="ssh" {% if vehicle.delivery_mode == "ssh" %}selected{% endif %}>SSH</option>
+              </select>
+            </label>
+            <label>Notes <input form="vehicle-update-{{ vehicle.id }}" name="notes" value="{{ vehicle.notes }}"></label>
+          </td>
+          <td>
+            <label>URL <input form="vehicle-update-{{ vehicle.id }}" name="console_url" value="{{ vehicle.console_url }}" placeholder="http://192.168.0.42"></label>
+            <label>New password <input form="vehicle-update-{{ vehicle.id }}" name="console_password" type="password" placeholder="leave blank to keep"></label>
+            <label class="checkbox-label"><input form="vehicle-update-{{ vehicle.id }}" name="clear_console_password" type="checkbox" value="true"> Clear password</label>
             {% if vehicle.console_url %}
-              <a href="{{ vehicle.console_url }}" target="_blank" rel="noreferrer">{{ vehicle.console_url }}</a>
+              <a href="{{ vehicle.console_url }}" target="_blank" rel="noreferrer">Open console</a>
             {% endif %}
           </td>
-          <td>{{ vehicle.ssh_username }}{% if vehicle.ssh_host %}@{{ vehicle.ssh_host }}:{{ vehicle.ssh_port }}{% endif %}</td>
+          <td>
+            <label>Host <input form="vehicle-update-{{ vehicle.id }}" name="ssh_host" value="{{ vehicle.ssh_host }}"></label>
+            <label>Port <input form="vehicle-update-{{ vehicle.id }}" name="ssh_port" type="number" value="{{ vehicle.ssh_port }}"></label>
+            <label>Username <input form="vehicle-update-{{ vehicle.id }}" name="ssh_username" value="{{ vehicle.ssh_username }}"></label>
+            <label>New password <input form="vehicle-update-{{ vehicle.id }}" name="ssh_password" type="password" placeholder="leave blank to keep"></label>
+            <label class="checkbox-label"><input form="vehicle-update-{{ vehicle.id }}" name="clear_ssh_password" type="checkbox" value="true"> Clear password</label>
+          </td>
+          <td>
+            <label>Private key path <input form="vehicle-update-{{ vehicle.id }}" name="ssh_private_key_path" value="{{ vehicle.ssh_private_key_path }}"></label>
+            <label>Artifact root <input form="vehicle-update-{{ vehicle.id }}" name="ssh_remote_artifact_root" value="{{ vehicle.ssh_remote_artifact_root }}"></label>
+            <label>Install command
+              <textarea form="vehicle-update-{{ vehicle.id }}" name="ssh_install_command_template" rows="4">{{ vehicle.ssh_install_command_template }}</textarea>
+            </label>
+          </td>
           <td>
             Console {{ "configured" if vehicle.has_console_password else "not set" }}<br>
             SSH {{ "configured" if vehicle.has_ssh_password or vehicle.has_ssh_key else "not set" }}
           </td>
           <td class="actions">
+            <form id="vehicle-update-{{ vehicle.id }}" method="post" action="/admin/vehicles/{{ vehicle.id }}/update">
+              <button type="submit">Save changes</button>
+            </form>
             <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-console"><button class="secondary" type="submit">Test Console</button></form>
             <form method="post" action="/admin/vehicles/{{ vehicle.id }}/test-ssh"><button class="secondary" type="submit">Test SSH</button></form>
           </td>
