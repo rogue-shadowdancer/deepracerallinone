@@ -22,6 +22,56 @@ The gateway does not run on the car or the training stack. The default delivery 
 
 ## Setup
 
+### One-click deployment
+
+Windows PowerShell:
+
+```powershell
+cd model-gateway
+.\scripts\deploy-windows.ps1 -Mode competition -AllowInsecureLanCookie -RunTests
+```
+
+Linux:
+
+```sh
+cd model-gateway
+./scripts/deploy-linux.sh --mode competition --allow-insecure-lan-cookie --run-tests
+```
+
+Both deploy scripts default to `competition` mode. They create `.venv`, install dependencies, generate `.gateway.env`, initialize the SQLite data directory, and start the service unless `-NoStart` / `--no-start` is passed. Use `dev` mode only for local testing:
+
+```powershell
+.\scripts\deploy-windows.ps1 -Mode dev -NoStart
+```
+
+```sh
+./scripts/deploy-linux.sh --mode dev --no-start
+```
+
+Generated local files are intentionally ignored by git:
+
+- `.gateway.env`: local configuration and secrets.
+- `.venv/`: Python virtual environment.
+- `data/`: SQLite database, uploads, and local backups.
+
+For HTTP-only LAN competitions, pass `-AllowInsecureLanCookie` or `--allow-insecure-lan-cookie`. For HTTPS deployments, set `GATEWAY_COOKIE_SECURE=true` in `.gateway.env`.
+
+After deployment, restart without reinstalling:
+
+```powershell
+.\scripts\run-windows.ps1 -Host 0.0.0.0 -Port 8080
+```
+
+```sh
+./scripts/run-linux.sh --host 0.0.0.0 --port 8080
+```
+
+Change the port by passing `-Port 8081` or `--port 8081`. Change the data directory with `-DataDir D:\deepracer-gateway-data` or `--data-dir /srv/deepracer-gateway/data`.
+
+Linux long-running process management is intentionally left to the site administrator. Run the script from `screen`, `tmux`, `pm2`, Docker, or a systemd unit that calls `scripts/run-linux.sh`.
+
+### Manual setup
+
 ```powershell
 cd model-gateway
 python -m venv .venv
