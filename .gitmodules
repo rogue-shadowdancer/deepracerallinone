@@ -57,7 +57,7 @@
 	url = https://github.com/aws-deepracer/aws-deepracer-offroad-sample-project.git
 [submodule "training-code/deepracer-on-aws"]
 	path = training-code/deepracer-on-aws
-	url = https://github.com/aws-solutions/deepracer-on-aws.git
+	url = https://github.com/rogue-shadowdancer/deepracer-on-aws.git
 [submodule "training-code/deepsim"]
 	path = training-code/deepsim
 	url = https://github.com/aws-deepracer/deepsim.git
