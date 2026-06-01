@@ -1,0 +1,62 @@
+name: Training Admin
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - ".gitmodules"
+      - ".github/workflows/training-admin.yml"
+      - "training-code/deepracer-on-aws"
+  push:
+    branches:
+      - "codex/training-admin-batch-management"
+    paths:
+      - ".gitmodules"
+      - ".github/workflows/training-admin.yml"
+      - "training-code/deepracer-on-aws"
+
+jobs:
+  checks:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: training-code/deepracer-on-aws/source
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Set up Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Set up pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@9.7.0 --activate
+
+      - name: Install dependencies
+        run: corepack pnpm install --frozen-lockfile
+
+      - name: Build model
+        run: corepack pnpm nx run model:build --output-style=static
+
+      - name: Typecheck website
+        run: corepack pnpm nx run website:typecheck --output-style=static
+
+      - name: Test website
+        run: corepack pnpm nx run website:test --output-style=static
+
+      - name: Test lambda
+        run: corepack pnpm nx run lambda:test --output-style=static
+
+      - name: Check workspace
+        run: corepack pnpm check
