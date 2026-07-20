@@ -1,0 +1,23 @@
+{
+  "$schema": "./deepracer.connection.schema.json",
+  "version": 1,
+  "deployment": {
+    "websiteUrl": "https://example.cloudfront.net/",
+    "runtimeConfigUrl": "https://example.cloudfront.net/env.js",
+    "apiEndpointUrl": "https://example.execute-api.us-east-1.amazonaws.com/prod/",
+    "region": "us-east-1"
+  },
+  "cognito": {
+    "userPoolId": "us-east-1_EXAMPLE123",
+    "userPoolClientId": "exampleclientid123",
+    "identityPoolId": "us-east-1:00000000-0000-4000-8000-000000000000"
+  },
+  "storage": {
+    "uploadBucketName": "example-deepracer-upload-bucket"
+  },
+  "login": {
+    "email": "racer@example.com",
+    "invitationAccountId": "admin-example-id",
+    "racerAlias": ""
+  }
+}
