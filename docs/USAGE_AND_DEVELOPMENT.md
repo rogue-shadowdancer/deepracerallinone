@@ -474,3 +474,20 @@ git push -u origin <branch-name>
 - AWS DeepRacer GitHub 组织：https://github.com/aws-deepracer
 - DeepRacer on AWS 源码：https://github.com/aws-solutions/deepracer-on-aws
 - DeepRacer on AWS 文档：https://docs.aws.amazon.com/solutions/deepracer-on-aws/
+
+## 11. DeepRacer on AWS 配置分层
+
+- 子模块的 `source/libs/config/src/data/defaultConfig.json`：版本控制中的应用和部署默认值，由 TypeScript 运行时解析器严格校验。
+- 子模块的 `source/apps/infra/cdk.json` 与环境变量/CDK context：部署时覆盖；ECR 和 CDK context 继续留在这里。
+- CloudFormation Outputs 与线上 `/env.js`：部署后生成的六个公开运行时值，前端 `window.EnvironmentConfig` 接口不变。
+- 根仓库的 `config/deepracer.connection.local.json`：本机只读运维检查档案。它由 `config/deepracer.connection.example.json` 创建，并由根级 `.gitignore` 忽略。
+- 密码、Cognito Token、Cookie 和 AWS 密钥：不属于上述任何配置。连接 Schema 不定义这些字段，Python 工具也会递归拒绝敏感键。
+
+连接档案只接受 HTTPS URL，并校验 Region 与 Cognito 资源 ID 前缀一致。`login.invitationAccountId` 是邀请标识，不是十二位 AWS Account ID；不知道 `racerAlias` 时保留空字符串，不猜测线上值。
+
+```powershell
+py -3 tools\deepracer_connection.py validate config\deepracer.connection.local.json
+py -3 tools\deepracer_connection.py check-live config\deepracer.connection.local.json
+```
+
+`validate` 只检查文件结构和安全规则。`check-live` 请求 CloudFront 首页并确认 DeepRacer 页面标识，安全解析仅包含 JSON 赋值的 `window.EnvironmentConfig`，逐项比较 API Endpoint、User Pool、User Pool Client、Identity Pool、Region 和上传桶，并以未认证 `/profile` 的 401/403 确认鉴权边界。它不会登录、写入后端、读取浏览器存储或自动修改档案。GitHub CI 只校验无真实账号的 example，不访问本地档案或真实部署。

@@ -5,17 +5,46 @@ on:
   pull_request:
     paths:
       - ".gitmodules"
+      - ".gitignore"
       - ".github/workflows/training-admin.yml"
+      - "config/**"
+      - "README.md"
+      - "docs/USAGE_AND_DEVELOPMENT.md"
+      - "tools/deepracer_connection.py"
+      - "tests/test_deepracer_connection.py"
       - "training-code/deepracer-on-aws"
   push:
     branches:
       - "codex/training-admin-batch-management"
     paths:
       - ".gitmodules"
+      - ".gitignore"
       - ".github/workflows/training-admin.yml"
+      - "config/**"
+      - "README.md"
+      - "docs/USAGE_AND_DEVELOPMENT.md"
+      - "tools/deepracer_connection.py"
+      - "tests/test_deepracer_connection.py"
       - "training-code/deepracer-on-aws"
 
 jobs:
+  connection-config:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Validate example connection config
+        run: python tools/deepracer_connection.py validate config/deepracer.connection.example.json
+
+      - name: Test connection tooling
+        run: python -m unittest discover -s tests -p "test_deepracer_connection.py"
+
   checks:
     runs-on: ubuntu-latest
     defaults:
@@ -57,6 +86,12 @@ jobs:
 
       - name: Test lambda
         run: corepack pnpm nx run lambda:test --output-style=static
+
+      - name: Test infrastructure
+        run: corepack pnpm nx run infra:test --output-style=static
+
+      - name: Synthesize infrastructure
+        run: corepack pnpm nx run infra:build --output-style=static
 
       - name: Check workspace
         run: corepack pnpm check

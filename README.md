@@ -32,6 +32,22 @@ git submodule update --init --recursive
 git submodule status --recursive
 ```
 
+## DeepRacer on AWS 连接档案
+
+`config/deepracer.connection.example.json` 是无真实账号、无凭据的版本控制示例。将它复制为 `config/deepracer.connection.local.json`，填入某次部署公开的 CloudFront、API Gateway、Cognito 和上传桶标识，以及本机使用的登录邮箱和邀请 ID；本地文件会被 Git 忽略。密码、Token、Cookie 和 AWS 密钥不属于任何项目配置文件，校验工具会递归拒绝这些字段。
+
+不访问网络即可校验档案结构：
+
+```powershell
+py -3 tools\deepracer_connection.py validate config\deepracer.connection.local.json
+```
+
+只读实时检查会访问首页和 `/env.js`，逐项比较六个公开运行时字段，并确认未认证 `/profile` 返回 401 或 403。它不会登录、提交表单、读取浏览器存储或覆盖本地档案：
+
+```powershell
+py -3 tools\deepracer_connection.py check-live config\deepracer.connection.local.json
+```
+
 ## 常见使用路径
 
 - 查 DeepRacer 开源资料：阅读 [deepracer-open-source-navigator/references/source-map.md](deepracer-open-source-navigator/references/source-map.md)。

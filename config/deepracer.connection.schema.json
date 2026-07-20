@@ -1,0 +1,95 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/rogue-shadowdancer/deepracerallinone/blob/main/config/deepracer.connection.schema.json",
+  "title": "DeepRacer on AWS connection profile",
+  "description": "Non-secret public deployment metadata and local login identifiers used for read-only validation. Credentials, tokens, cookies, and AWS keys are intentionally unsupported.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["$schema", "version", "deployment", "cognito", "storage", "login"],
+  "properties": {
+    "$schema": {
+      "const": "./deepracer.connection.schema.json"
+    },
+    "version": {
+      "const": 1
+    },
+    "deployment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["websiteUrl", "runtimeConfigUrl", "apiEndpointUrl", "region"],
+      "properties": {
+        "websiteUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://"
+        },
+        "runtimeConfigUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[^?#]+/env\\.js$"
+        },
+        "apiEndpointUrl": {
+          "type": "string",
+          "format": "uri",
+          "pattern": "^https://[^/?#]+/[^?#]+/$"
+        },
+        "region": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-\\d$"
+        }
+      }
+    },
+    "cognito": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["userPoolId", "userPoolClientId", "identityPoolId"],
+      "properties": {
+        "userPoolId": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-\\d_[A-Za-z0-9]+$"
+        },
+        "userPoolClientId": {
+          "type": "string",
+          "pattern": "^[a-z0-9]+$"
+        },
+        "identityPoolId": {
+          "type": "string",
+          "pattern": "^[a-z]{2}(?:-gov)?-[a-z]+-\\d:[0-9a-fA-F-]{36}$"
+        }
+      }
+    },
+    "storage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["uploadBucketName"],
+      "properties": {
+        "uploadBucketName": {
+          "type": "string",
+          "pattern": "^[a-z0-9](?:[a-z0-9.-]{1,61}[a-z0-9])?$"
+        }
+      }
+    },
+    "login": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["email", "invitationAccountId", "racerAlias"],
+      "properties": {
+        "email": {
+          "type": "string",
+          "format": "email"
+        },
+        "invitationAccountId": {
+          "description": "DeepRacer invitation identifier; this is not a twelve-digit AWS account ID.",
+          "type": "string",
+          "minLength": 1,
+          "not": {
+            "pattern": "^[0-9]{12}$"
+          }
+        },
+        "racerAlias": {
+          "type": "string"
+        }
+      }
+    }
+  }
+}
