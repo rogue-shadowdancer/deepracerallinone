@@ -2,7 +2,16 @@
 
 这是一个面向 AWS DeepRacer 学习、比赛和二次开发的整合仓库。它本身不复制上游代码，而是通过 Git submodules 固定 AWS DeepRacer 车辆侧、训练侧、仿真侧和示例项目的公开源码版本，同时提供本仓库自有的资料导航和局域网模型分发服务。
 
-完整说明见 [docs/USAGE_AND_DEVELOPMENT.md](docs/USAGE_AND_DEVELOPMENT.md)。
+## 文档入口
+
+- [使用与开发手册](docs/USAGE_AND_DEVELOPMENT.md)：克隆、配置、操作、开发、验证和真实环境验收入口。
+- [开发日志](docs/DEVELOPMENT_LOG.md)：按日期记录功能里程碑、提交、PR、验证证据和未完成项。
+- [Model Gateway 专项说明](model-gateway/README.md)：比赛现场模型收集、审核、诊断和车辆分发。
+- [DeepRacer 开源源码导航](deepracer-open-source-navigator/references/source-map.md)：车辆侧、训练侧、仿真侧和官方资料索引。
+
+## 当前状态
+
+仓库已经具备源码导航、局域网 Model Gateway、DeepRacer on AWS Training Admin 扩展、连接档案校验工具及自动化测试/CI。现有证据证明代码候选和模拟验证可通过，但**不证明**真实 AWS 环境已经部署、真实账号写入已经验收、模型已经成功下发到实体车，或真实赛事已经端到端跑通；这些项目必须按[完整手册的现场验收清单](docs/USAGE_AND_DEVELOPMENT.md#13-真实-aws-验收清单)单独留证。
 
 ## 仓库内容
 
@@ -66,6 +75,7 @@ py -3 tools\deepracer_connection.py check-live config\deepracer.connection.local
 - 研究车辆侧代码：从 `vehicle-code/aws-deepracer-launcher` 和 `vehicle-code/aws-deepracer-*` packages 开始。
 - 研究训练和仿真代码：从 `training-code/deepracer-on-aws`、`training-code/deepsim` 和 `training-code/ude-*` 开始。
 - 管理已部署训练实例的用户和配额：以管理员身份打开 `Instance management`，并按完整指南第 12 节操作。
+- 了解功能演进和验证边界：阅读 [docs/DEVELOPMENT_LOG.md](docs/DEVELOPMENT_LOG.md)。
 
 ## Model Gateway 快速部署
 

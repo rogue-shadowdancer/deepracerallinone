@@ -1,6 +1,65 @@
 # DeepRacer All In One 使用与开发说明
 
-本文档是本仓库的完整使用和开发入口。根 `README.md` 保持简洁，本文件说明从克隆、资料导航、模型网关部署、车辆侧和训练侧源码研究，到本地开发、测试、子模块维护和推送 GitHub 的完整流程。
+本文档是本仓库的完整使用和开发入口。根 `README.md` 保持简洁，本文件说明从克隆、资料导航、模型网关部署、车辆侧和训练侧源码研究，到本地开发、测试、子模块维护、真实环境验收和推送 GitHub 的完整流程。功能演进和历史验证证据另见 [DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md)。
+
+## 目录
+
+- [0. 阅读对象、前置条件与证据边界](#0-阅读对象前置条件与证据边界)
+- [1. 项目定位](#1-项目定位)
+- [2. 获取代码和初始化](#2-获取代码和初始化)
+- [3. 按目标选择入口](#3-按目标选择入口)
+- [4. Model Gateway 使用说明](#4-model-gateway-使用说明)
+- [5. 开发流程](#5-开发流程)
+- [6. 子模块维护](#6-子模块维护)
+- [7. GitHub 推送策略](#7-github-推送策略)
+- [8. 安全和比赛注意事项](#8-安全和比赛注意事项)
+- [9. 排障速查](#9-排障速查)
+- [10. 参考入口](#10-参考入口)
+- [11. DeepRacer on AWS 配置分层](#11-deepracer-on-aws-配置分层)
+- [12. Training Admin 操作说明](#12-training-admin-操作说明)
+- [13. 真实 AWS 验收清单](#13-真实-aws-验收清单)
+- [14. 实体车验收清单](#14-实体车验收清单)
+- [15. 文档维护规则](#15-文档维护规则)
+
+## 0. 阅读对象、前置条件与证据边界
+
+### 0.1 谁应该读哪一部分
+
+| 读者 | 建议入口 | 主要目标 |
+| --- | --- | --- |
+| 初学者或授课人员 | 第 1-3 节、源码导航 | 了解仓库组成，找到奖励函数、训练、车辆和仿真资料。 |
+| DeepRacer on AWS 运维人员 | 第 3.5、11-13 节 | 校验连接档案，操作 Training Admin，完成真实 AWS 验收。 |
+| 比赛现场管理员 | 第 4、8、9、14 节 | 部署 Model Gateway，管理模型和车辆，留存现场证据。 |
+| 开发者和维护者 | 第 5-7、15 节与开发日志 | 修改父仓库或 submodule，运行检查并通过 PR 发布。 |
+
+### 0.2 前置条件
+
+| 工作 | 前置条件 |
+| --- | --- |
+| 克隆和源码研究 | Git，能够访问上游 GitHub 仓库；首次获取必须初始化全部 submodules。 |
+| 连接档案校验 | Python 3；某次真实部署公开的 CloudFront、API Gateway、Cognito、Region 和上传桶标识。档案不得保存密码、Token、Cookie 或 AWS 密钥。 |
+| Training Admin 开发 | JDK 17、Node.js 22、Corepack pnpm 9.7.0，以及已初始化的 `training-code/deepracer-on-aws` submodule。 |
+| Model Gateway | Python 3.10+；管理员机器和车辆网络互通；使用 SSH 时还需可信 host key、车辆账号和可写目录。 |
+| 实体车验收 | 可控局域网、已充电车辆、已知可用的物理模型、空旷测试区域、急停/断电手段和现场安全观察员。 |
+
+### 0.3 当前状态和证据矩阵
+
+| 能力 | 代码/文档状态 | 自动化证据 | 真实环境状态 |
+| --- | --- | --- | --- |
+| 开源源码导航与固定版本 | 已实现 | Git submodule 指针和仓库路径可检查 | 不涉及运行时验收 |
+| Model Gateway | 已实现上传、审核、诊断、分发、维护和审计流程 | Python 测试、脚本 dry-run、Docker build 和 GitHub Actions | 真实车辆分发及完整赛事仍需按第 14 节验收 |
+| DeepRacer on AWS Training Admin | 已实现批量邀请、用户同步、批量配额/角色更新和配置校验 | model、website、lambda、infra 测试，typecheck、CDK synth 和 Hosted CI | 真实 AWS 部署与真实账号写入仍需按第 13 节验收 |
+| DeepRacer 连接档案工具 | 已实现 schema、离线 `validate` 和只读 `check-live` | 根仓库单元测试和 Hosted CI | 只有针对指定真实部署运行并保存结果后，才能证明该部署的公开配置可达 |
+| 实体车/真实赛事端到端 | 提供适配器、操作说明和验收步骤 | 模拟 Console、SSH 和 HTTP 路径不能代替真车证据 | 当前仓库没有足够证据宣称已经完成 |
+
+“自动化通过”只表示候选代码与测试约束一致；“协议或路由匹配”只表示实现具备对接条件。真实 AWS、真实账号、真实车辆和现场网络必须分别执行验收，并记录环境、时间、候选 SHA、结果和可回收的审计证据。
+
+### 0.4 四条端到端路径
+
+1. **源码研究**：递归克隆 -> 检查 submodule 状态 -> 在源码导航中选择车辆/训练/仿真入口 -> 在对应 submodule 内阅读或实验。只读研究不改变父仓库 gitlink。
+2. **DeepRacer on AWS 连接检查**：复制无凭据 example -> 在被忽略的 local 档案中填入公开部署值 -> 运行 `validate` -> 获得授权后运行只读 `check-live` -> 保存命令、时间和结果。该流程不登录、不写入后端。
+3. **Training Admin 管理**：先确认真实部署、管理员账号和 `dr-admins` 权限 -> 打开 `Instance management` -> 先 preview -> 核对影响人数与配额 -> 只在明确授权后执行 `Submit`、`Apply sync` 或 `Update N users` -> 保存逐行结果。完整规则见第 12-13 节。
+4. **Model Gateway 比赛现场**：准备密钥并部署 -> 创建用户、队伍、事件和轮次 -> 注册并诊断车辆 -> 用户上传、管理员审核 -> 分发候选模型 -> 在车辆 console 手动确认和低速测试 -> 备份并导出时间线/support bundle。完整规则见第 4、8、14 节。
 
 ## 1. 项目定位
 
@@ -17,11 +76,13 @@
 | --- | --- |
 | `README.md` | GitHub 首页快速入口。 |
 | `docs/USAGE_AND_DEVELOPMENT.md` | 本完整说明。 |
+| `docs/DEVELOPMENT_LOG.md` | 已进入父仓库历史的功能里程碑、验证证据和未完成项。 |
 | `deepracer-open-source-navigator/` | DeepRacer 开源生态导航资料和 Codex skill。 |
 | `model-gateway/` | 局域网模型上传与车辆分发服务。 |
 | `vehicle-code/` | 车辆侧 ROS2、设备控制、Web console、传感器和样例项目 submodules。 |
 | `training-code/` | DeepRacer on AWS、仿真器、RL 环境和 notebooks submodules。 |
 | `.github/workflows/model-gateway.yml` | `model-gateway` 的 GitHub Actions 测试和部署脚本检查。 |
+| `.github/workflows/training-admin.yml` | 连接档案和固定 Training Admin submodule 候选的 Hosted CI。 |
 
 ## 2. 获取代码和初始化
 
@@ -460,10 +521,12 @@ cd ..
 提交并推送分支：
 
 ```bash
-git add README.md docs/USAGE_AND_DEVELOPMENT.md
-git commit -m "docs: expand usage and development guide"
+git add README.md docs/USAGE_AND_DEVELOPMENT.md docs/DEVELOPMENT_LOG.md
+git commit -m "docs: improve manual and add development log"
 git push -u origin <branch-name>
 ```
+
+如果同时调整文档 CI 触发范围，再显式暂存 `.github/workflows/training-admin.yml`。不要使用 `git add .`，避免把本地连接档案、教学输出或 submodule 内工作一起带入候选。
 
 如果测试失败，不要推送，除非维护者明确要求带失败风险继续。若没有可运行测试，也应说明未运行原因和风险。
 
@@ -482,16 +545,25 @@ git push -u origin <branch-name>
 | 现象 | 处理 |
 | --- | --- |
 | submodule 目录为空 | 运行 `git submodule update --init --recursive`。 |
+| submodule 显示 detached HEAD | 读取固定版本是正常状态；要开发时先在 submodule 内创建或切换明确分支，不要直接覆盖父仓库 gitlink。 |
 | Windows 默认 `python` 版本过低 | 使用 `py -3.10` 或更新版本创建虚拟环境。 |
+| 连接档案 `validate` 失败 | 对照 schema 修正 URL、Region、Cognito ID 和必填字段；删除密码、Token、Cookie、AWS 密钥等禁止字段。 |
+| `check-live` 与 `/env.js` 不一致 | 确认档案对应同一次部署及同一 Region，不要用猜测值覆盖线上结果；该命令不会自动修改档案。 |
+| Training Admin 显示 `Unauthorized` | 确认当前 Cognito 用户属于 `dr-admins`，并核对部署使用的 User Pool；不要通过前端绕过权限检查。 |
+| 批量邀请 CSV 无法提交 | 使用下载模板，检查表头、邮箱、alias、role、配额格式和重复行；有任一 validation error 时先修正再提交。 |
+| 批量配额输入被拒绝 | 勾选的字段不能留空；`-1` 表示 unlimited，`0` 是会实际阻止对应资源使用的零配额。 |
 | competition 模式启动失败 | 检查默认管理员、`GATEWAY_SESSION_SECRET`、`GATEWAY_CREDENTIAL_SECRET` 和 cookie 安全配置。 |
+| 浏览器反复退出或 cookie 不生效 | HTTPS 使用 `GATEWAY_COOKIE_SECURE=true`；HTTP-only 局域网必须显式允许 insecure LAN cookie，并记录站点风险。 |
 | 用户无法上传 | 确认用户 active、属于 active team、当前轮次允许上传、模型是合法 `.tar.gz`。 |
-| Console API 下发失败 | 确认车辆 Console URL、密码、网络连通性和 `/api/isModelLoading` 状态。 |
+| Console API 下发失败 | 确认车辆 Console URL、密码、固件路由、证书行为、Cookie、网络连通性和 `/api/isModelLoading` 状态；不要全局关闭 TLS 校验。 |
 | SSH 下发失败 | 确认 host key、账号权限、artifact root 可写、rsync/SFTP 可用和 ROS2 install command。 |
 | CI 脚本检查失败 | 先在 `model-gateway/` 本地运行对应 dry-run 命令复现。 |
+| 车辆更新或重装前无法确认数据影响 | 停止操作并先备份；更新到 Ubuntu 20.04/ROS2 开源栈会清除设备数据。 |
 
 ## 10. 参考入口
 
 - 根快速入口：`README.md`
+- 开发里程碑与证据：[DEVELOPMENT_LOG.md](DEVELOPMENT_LOG.md)
 - Model Gateway 详细说明：`model-gateway/README.md`
 - DeepRacer 开源来源图：`deepracer-open-source-navigator/references/source-map.md`
 - AWS DeepRacer GitHub 组织：https://github.com/aws-deepracer
@@ -597,3 +669,70 @@ git status --short --branch
 ```
 
 文档、测试和 CI 通过只证明当前 GitHub 候选与描述一致，不代表真实 AWS 部署、真实账号写入或实体车现场验收已经完成。
+
+## 13. 真实 AWS 验收清单
+
+本清单是需要真实账号和现场授权的人工验收，不由本文档、单元测试或 GitHub CI 自动完成。执行时记录父仓库 SHA、`training-code/deepracer-on-aws` gitlink、AWS Account/Region 的非敏感标识、时间和操作者；不要把密码、Token、Cookie 或密钥写入仓库。
+
+### 13.1 部署和公开运行时配置
+
+- [ ] CloudFormation/CDK 部署成功，并保存 stack 名称、Region 和最终状态。
+- [ ] 保存 CloudFormation Outputs 中 CloudFront、API Gateway、Cognito User Pool/Client、Identity Pool 和上传桶的非敏感值。
+- [ ] CloudFront 首页可以访问，页面内容与 DeepRacer on AWS 部署一致。
+- [ ] `/env.js` 中六个公开运行时字段与同次部署 Outputs 一致。
+- [ ] 使用本机 local 档案运行 `validate` 和只读 `check-live`，记录命令、时间、退出码和目标主机；不提交 local 档案。
+
+### 13.2 身份、数据和训练资源
+
+- [ ] 使用测试管理员登录，并确认其属于 `dr-admins`；普通测试用户访问 `/manageInstance` 被拒绝。
+- [ ] Cognito 角色组、DynamoDB profiles 和 Training Admin preview 的用户映射一致。
+- [ ] 确认部署所用 SageMaker instance type 与 Service Quotas/配置约束一致。
+- [ ] 确认上传桶、DynamoDB 表和训练资源位于预期 Region，且 IAM 权限没有越过部署要求。
+
+### 13.3 授权写入和留证
+
+- [ ] 在隔离测试用户上运行一次批量邀请，先保存 preview，再经授权执行 `Submit`，逐行核对结果。
+- [ ] 对同一测试范围运行一次 Cognito sync preview；只有确认 `Created`/`Updated` 集合后才执行 `Apply sync`。
+- [ ] 对隔离测试用户运行一次批量角色或配额更新，验证未勾选字段保持不变，`-1` 与 `0` 语义正确。
+- [ ] 核对 CloudWatch、Cognito、DynamoDB 和应用返回结果，确保成功提示与实际记录一致。
+- [ ] 清理或保留测试数据时遵循现场数据策略，并记录清理结果。
+
+以上项目全部完成前，状态应写为“具备真实 AWS 对接代码，真实部署/写入尚未完成验收”，不能写成“已上线”或“真实后端已跑通”。
+
+## 14. 实体车验收清单
+
+车辆验收可能产生模型安装、SSH 写入和物理运动。必须由拥有车辆与网络权限的现场人员执行；首次运动测试使用低速、架空车轮或空旷封闭区域，并安排观察员随时断电。
+
+### 14.1 安全和连通性预检
+
+- [ ] 记录车辆标识、固件/系统版本、电池状态、测试地点、时间和候选父仓库 SHA。
+- [ ] 管理员机器与车辆位于可控网络；确认车辆 IP/hostname 可达，不暴露到不可信公网。
+- [ ] 能通过 `https://<vehicle-ip>` 或 `https://<hostname>.local` 打开车辆 console，并核对证书警告、登录和 Cookie 行为。
+- [ ] 如使用 SSH，先独立核对并记录 host key fingerprint，再配置凭据；禁止通过全局关闭 host key 或 TLS 校验规避问题。
+- [ ] 准备已知可以在该车辆版本运行的物理模型 `.tar.gz`、急停/断电手段和清晰测试区域。
+
+### 14.2 注册、诊断和分发
+
+- [ ] 在 Model Gateway 注册车辆，选择 `console_api`、`ssh` 或 `auto`，只填写该方式必需的信息。
+- [ ] 运行 `/admin/health` 和车辆诊断，确认目标 URL/SSH、存储空间、认证和基本网络状态。
+- [ ] 上传并审核已知可用模型，记录 submission、candidate、vehicle 和 dispatch 标识。
+- [ ] 单独验证 Console API；如现场允许 SSH，再单独验证 SSH；最后验证 `auto` 的优先级和回退记录。
+- [ ] 等待 `/api/is_model_installed` 和 `/api/isModelLoading` 对应状态完成，超时或断连时停止并排查，不重复盲目分发。
+
+### 14.3 车辆确认、低速测试和收尾
+
+- [ ] 在车辆 console 中确认模型出现；网关负责安装，不应声称已经自动激活模型。
+- [ ] 手动选择模型，先检查相机、校准、转向和油门状态，再进行最低安全速度测试。
+- [ ] 由观察员确认车辆行为和停止手段正常后，才能转入封闭赛道测试。
+- [ ] 导出 dispatch 时间线、审计记录和 support bundle；检查其中不含明文密码、Token、Cookie、私钥或 AWS 密钥。
+- [ ] 完成数据库与 artifact 备份，记录失败重试、取消、清理和最终车辆状态。
+
+只有实际车辆上的模型安装确认、人工选择和安全运动测试均留有证据时，才能将该车辆/模型组合标记为“真车验收通过”。
+
+## 15. 文档维护规则
+
+- 使用手册描述当前可重复执行的流程；[开发日志](DEVELOPMENT_LOG.md)记录已经进入父仓库历史的里程碑、证据和限制，两者不要互相复制整段内容。
+- 功能、命令、环境变量、路由或 CI gate 变化时，同一候选必须同步更新对应文档。
+- 开发日志按日期追加，不回填无法从提交、PR、CI 或现场记录复核的精确测试数量。
+- 自动化、真实 AWS 和实体车证据必须分栏表达；没有现场证据时明确写“未执行”或“待验收”。
+- 文档候选至少检查 UTF-8、Markdown 相对链接、敏感信息、`git diff --check` 和适用的轻量测试；正式合并以精确 PR HEAD 的 Hosted CI 为准。
