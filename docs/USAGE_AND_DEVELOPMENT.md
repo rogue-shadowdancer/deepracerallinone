@@ -108,6 +108,12 @@ git submodule update --init --recursive
 - `training-code/aws-deepracer-notebooks`：训练和实验 notebooks。
 - `training-code/deepracer-compat-reward-function`：奖励函数兼容工具。
 
+### 3.5 管理 DeepRacer on AWS 用户
+
+已经部署 DeepRacer on AWS、并以管理员账号登录后，从侧边栏进入 `Instance management`（`/manageInstance`）。这里可以管理实例和新用户默认配额、批量邀请用户、从 Cognito User Pool 同步 profiles，以及对表格中选中的用户批量更新角色和配额。非管理员访问该页面会看到 `Unauthorized`，不会获得这些操作入口。
+
+完整操作和写入边界见第 12 节。连接档案的 `validate` 与 `check-live` 仍是独立的本机只读工具，不会代替管理员登录、用户同步或部署。
+
 ## 4. Model Gateway 使用说明
 
 ### 4.1 运行环境
@@ -369,13 +375,30 @@ python -m model_gateway.maintenance --help
 docker build -t deepracer-model-gateway:test .
 ```
 
-如果只改根文档，最低检查是 `git diff --check`。但如果推送策略要求项目适用测试，建议仍执行 `model-gateway` 测试，因为这是仓库当前唯一自有可运行项目和 CI 覆盖重点。
+如果只改根文档，最低本地检查是 `git diff --check`、相对链接和命令路径核对，以及与改动相关的轻量测试。`README.md`、本文档、连接配置和 `training-code/deepracer-on-aws` 指针都在 `Training Admin` workflow 的 path filter 中；正式发布仍以新父仓库 SHA 的完整 Hosted CI 为准。
+
+如果修改 `training-code/deepracer-on-aws` 中的 Training Admin，在 `training-code/deepracer-on-aws/source` 使用与 Hosted CI 相同的运行时：JDK 17、Node.js 22 和 Corepack pnpm 9.7.0。
+
+```bash
+corepack enable
+corepack prepare pnpm@9.7.0 --activate
+corepack pnpm install --frozen-lockfile
+corepack pnpm nx run model:build --output-style=static
+corepack pnpm nx run website:typecheck --output-style=static
+corepack pnpm nx run website:test --output-style=static
+corepack pnpm nx run lambda:test --output-style=static
+corepack pnpm nx run infra:test --output-style=static
+corepack pnpm nx run infra:build --output-style=static
+corepack pnpm check
+```
+
+迭代小改动时先运行直接相关的 website、lambda 或 infra target；推送或 publication 前再要求上述完整 gate 在精确候选上通过。不要用旧 SHA 的 CI 结果替代新候选验证。
 
 ### 5.4 常见代码修改边界
 
 - 修改根 README、docs 或 navigator 资料：只需保持链接、路径和 submodule 事实准确。
 - 修改 `model-gateway`：必须运行 pytest，并关注上传校验、session、CSRF、车辆交付、备份和诊断相关测试。
-- 修改上游 submodule 内代码：确认这是有意修改上游 checkout。根仓库只会记录 submodule 指针或未提交的 submodule 工作树状态，不会自动把上游仓库改动纳入根仓库。
+- 修改 submodule 内代码：确认这是有意修改对应 checkout。先在 submodule 当前分支选择性提交、验证并推送，再回到父仓库提交新的 gitlink；根仓库不会自动把 submodule 工作树改动纳入提交，也不能替代 submodule 自身的远端发布。
 
 ## 6. 子模块维护
 
@@ -491,3 +514,86 @@ py -3 tools\deepracer_connection.py check-live config\deepracer.connection.local
 ```
 
 `validate` 只检查文件结构和安全规则。`check-live` 请求 CloudFront 首页并确认 DeepRacer 页面标识，安全解析仅包含 JSON 赋值的 `window.EnvironmentConfig`，逐项比较 API Endpoint、User Pool、User Pool Client、Identity Pool、Region 和上传桶，并以未认证 `/profile` 的 401/403 确认鉴权边界。它不会登录、写入后端、读取浏览器存储或自动修改档案。GitHub CI 只校验无真实账号的 example，不访问本地档案或真实部署。
+
+## 12. Training Admin 操作说明
+
+### 12.1 权限、入口和写入边界
+
+本节描述已经部署的 DeepRacer on AWS 网站功能，不执行或替代部署。管理员登录后，从侧边栏进入 `Instance management`，也可以访问 `/manageInstance`。页面会检查当前用户是否属于 `dr-admins`；非管理员只会看到 `Unauthorized`。
+
+页面中的操作分为预览和写入两类：
+
+- 只读或本地预览：批量邀请的 CSV 解析与 preview、`Sync AWS users` 初始 preview、`Refresh preview`。
+- 后端写入：批量邀请的 `Submit`、Cognito 同步的 `Apply sync`、批量更新的 `Update N users`，以及现有单用户/实例配额操作。
+
+提交前先核对预览、影响人数和配额值。页面返回逐行结果；不能仅凭成功通知推断每一行都成功。
+
+### 12.2 配额和批量更新
+
+`Instance quotas` 管理实例级训练资源配额，`New user quotas` 管理新建 profile 的默认训练时长和模型数。SageMaker instance type、Service Quotas 名称和部署配置关系见 [`training-code/deepracer-on-aws/source/docs/configuration.md`](../training-code/deepracer-on-aws/source/docs/configuration.md)。运行时配置解析和 CDK synth 会拒绝不受支持的训练实例类型。
+
+批量修改现有用户：
+
+1. 在 profiles 表格中选择一个或多个用户。
+2. 打开 `Actions`，选择 `Batch update users`。
+3. 勾选要修改的 `Update role`、`Update usage limit` 或 `Update model limit`；未勾选字段保持不变。
+4. 检查 `Update N users` 中的人数，再提交。
+
+配额值规则：
+
+- `usage limit` 以小时输入，非负数会换算为分钟；`-1` 表示 unlimited。
+- `model limit` 只接受非负整数；`-1` 表示 unlimited。
+- 显式 `0` 是合法的零配额，会阻止对应训练或模型创建；不要把 `0` 当成“未设置”。
+- 已勾选的配额字段不能为空或只包含空白；页面会显示 validation error，并且不会发送 batch mutation。
+- 至少勾选一个字段才能提交。全部行成功时页面会清除表格选择；部分失败时保留逐行结果供管理员检查。
+
+### 12.3 批量邀请用户
+
+打开 `Batch invite users` 后，优先点击 `Download template` 获取 CSV。固定表头是：
+
+```csv
+email,alias,role,usageHours,modelLimit
+student@example.com,student01,racer,2,5
+```
+
+字段规则：
+
+- `email` 必填，同一 CSV 中不能重复，并且必须是有效邮箱格式。
+- `alias` 可选；填写时必须为 3-20 个字符，只能使用字母、数字、下划线或连字符。
+- `role` 可选；接受 `racer`、`race facilitator`、`admin`，也接受 `dr-racers`、`dr-race-facilitators`、`dr-admins` 等对应组名。留空时使用服务默认值。
+- `usageHours` 可选；接受 `-1`、`unlimited` 或非负小时数，非负值会换算为分钟。
+- `modelLimit` 可选；接受 `-1`、`unlimited` 或非负整数。
+
+上传 CSV 或粘贴文本后，浏览器先按行校验并生成 `Preview`。只要存在 validation error，或没有任何有效数据行，`Submit` 就保持禁用。提交后检查 summary 和 `Batch results`；若有失败行，使用 `Download failed rows` 下载 `failed-batch-invites.csv`，修正后只重试失败记录。
+
+### 12.4 同步 Cognito 用户
+
+`Sync AWS users` 会分页读取当前配置的 Cognito User Pool，并与 DynamoDB profiles 比较。打开 modal 时自动生成 preview，也可以使用 `Refresh preview` 重新获取。结果状态含义：
+
+- `Created`：Cognito 用户属于 DeepRacer 角色组，但不存在对应 profile；Apply 时使用当前新用户默认配额创建。
+- `Updated`：现有 profile 的 email 或 DeepRacer role 与 Cognito 不一致；Apply 时只更新这些差异字段。
+- `Unchanged`：两侧已一致。
+- `Skipped`：例如 Cognito 用户缺少 username/email、未加入 DeepRacer 角色组，或既有 profile 没有匹配 Cognito 用户；不会写入或删除。
+- `Failed`：该行比较或应用失败，需要根据 message 单独排查。
+
+只有 preview 中 `Created + Updated` 大于零时，`Apply sync` 才可用。Apply 完成后按钮会被锁定，结果表切换为实际执行结果；需要再次同步时关闭并重新打开，或先重新获取 preview。同步不会删除 profile，也不会修改既有 profile 的 alias、训练时长或模型数配额。
+
+### 12.5 开发、测试和两仓库提交
+
+Training Admin 由父仓库 workflow、父仓库连接配置工具，以及 `training-code/deepracer-on-aws` submodule 中的网站、Lambda、配置和 CDK 共同组成。修改 submodule 代码时必须保持以下顺序：
+
+1. 在 submodule 运行直接相关测试，并在发布候选上运行第 5.3 节的完整 gate。
+2. 只暂存预期 submodule 文件，完成 review 后先提交并推送 submodule 分支。
+3. 回到父仓库，只暂存更新后的 `training-code/deepracer-on-aws` gitlink 及明确批准的父文件。
+4. 推送父分支后，以父仓库精确 SHA 的 Hosted `Training Admin` workflow 作为 publication gate。
+
+如果只修改本文档和根 README，不要创建 submodule 提交或改变 gitlink。推送前至少运行：
+
+```powershell
+py -3 tools\deepracer_connection.py validate config\deepracer.connection.example.json
+py -3 -m unittest discover -s tests -p "test_deepracer_connection.py"
+git diff --check
+git status --short --branch
+```
+
+文档、测试和 CI 通过只证明当前 GitHub 候选与描述一致，不代表真实 AWS 部署、真实账号写入或实体车现场验收已经完成。
