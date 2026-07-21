@@ -530,7 +530,7 @@ py -3 tools\deepracer_connection.py check-live config\deepracer.connection.local
 
 ### 12.2 配额和批量更新
 
-`Instance quotas` 管理实例级训练资源配额，`New user quotas` 管理新建 profile 的默认训练时长和模型数。SageMaker instance type、Service Quotas 名称和部署配置关系见 [`training-code/deepracer-on-aws/source/docs/configuration.md`](../training-code/deepracer-on-aws/source/docs/configuration.md)。运行时配置解析和 CDK synth 会拒绝不受支持的训练实例类型。
+`Instance quotas` 管理实例级训练资源配额，`New user quotas` 管理新建 profile 的默认训练时长和模型数。SageMaker instance type、Service Quotas 名称和部署配置关系见子模块精确提交中的 [`source/docs/configuration.md`](https://github.com/rogue-shadowdancer/deepracer-on-aws/blob/b41185fd698eda1dcef918b48987a160271c50ae/source/docs/configuration.md)。运行时配置解析和 CDK synth 会拒绝不受支持的训练实例类型。
 
 批量修改现有用户：
 
