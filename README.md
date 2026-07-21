@@ -48,12 +48,24 @@ py -3 tools\deepracer_connection.py validate config\deepracer.connection.local.j
 py -3 tools\deepracer_connection.py check-live config\deepracer.connection.local.json
 ```
 
+## DeepRacer on AWS Training Admin
+
+已部署 DeepRacer on AWS 后，管理员可以从网站侧边栏进入 `Instance management`（路由 `/manageInstance`）管理用户和配额；非管理员访问该页面会被拒绝。页面提供：
+
+- `Instance quotas` 和 `New user quotas`：查看或设置实例级与新用户默认配额。
+- `Batch invite users`：下载 CSV 模板、在浏览器中校验并预览，再批量邀请用户；失败行可以单独下载后修正重试。
+- `Sync AWS users`：先只读预览 Cognito User Pool 与现有 profiles 的差异，再由管理员选择 `Apply sync` 创建或更新 profile；同步不会删除没有匹配 Cognito 用户的既有 profile。
+- `Batch update users`：在 profiles 表格中多选用户，批量修改角色、训练使用时长或模型数限制；只有勾选的字段会进入请求。
+
+配额输入中，`-1` 表示 unlimited，显式 `0` 表示零配额。勾选批量配额更新后不能保留空输入，避免空字符串被误当作零。CSV preview、sync preview 和 `Refresh preview` 不写入后端；`Submit`、`Apply sync` 和 `Update N users` 才是写入边界。完整操作步骤和开发验证命令见 [docs/USAGE_AND_DEVELOPMENT.md](docs/USAGE_AND_DEVELOPMENT.md) 第 12 节。
+
 ## 常见使用路径
 
 - 查 DeepRacer 开源资料：阅读 [deepracer-open-source-navigator/references/source-map.md](deepracer-open-source-navigator/references/source-map.md)。
 - 部署比赛模型网关：阅读 [model-gateway/README.md](model-gateway/README.md)，或按完整指南中的部署步骤执行。
 - 研究车辆侧代码：从 `vehicle-code/aws-deepracer-launcher` 和 `vehicle-code/aws-deepracer-*` packages 开始。
 - 研究训练和仿真代码：从 `training-code/deepracer-on-aws`、`training-code/deepsim` 和 `training-code/ude-*` 开始。
+- 管理已部署训练实例的用户和配额：以管理员身份打开 `Instance management`，并按完整指南第 12 节操作。
 
 ## Model Gateway 快速部署
 
